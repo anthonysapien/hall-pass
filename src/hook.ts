@@ -40,10 +40,11 @@ function prompt(reason: string): never {
   process.exit(1)
 }
 
-import { SAFE_COMMANDS, DB_CLIENTS, INSPECTED_COMMANDS } from "./safelist.ts"
-import { extractCommandInfos } from "./parser.ts"
+import { SAFE_COMMANDS, DB_CLIENTS, INSPECTED_COMMANDS, DANGEROUS_ENV_VARS } from "./safelist.ts"
+import { extractCommandInfos, extractRedirects } from "./parser.ts"
 import { extractSqlFromArgs, isSqlReadOnly } from "./sql.ts"
 import { isGitCommandSafe } from "./git.ts"
+import { isInspectedCommandSafe } from "./inspectors.ts"
 import { loadConfig } from "./config.ts"
 import { createDebug } from "./debug.ts"
 import { createAudit } from "./audit.ts"
@@ -143,6 +144,33 @@ try {
 const commandInfos = extractCommandInfos(ast)
 debug("commands", commandInfos.map(c => c.name))
 
+// -- Check redirects against path protection --
+
+const redirects = extractRedirects(ast)
+debug("redirects", redirects)
+
+for (const redir of redirects) {
+  const op = redir.op === "write" ? "write" as const : "read" as const
+  const decision = checkFilePath(redir.path, op, config)
+  if (!decision.allowed) {
+    debug("redirect-block", { path: redir.path, op, reason: decision.reason })
+    audit.log({ tool: "Bash", input: command, decision: "prompt", reason: `redirect ${decision.reason}`, layer: "paths" })
+    prompt(`redirect-blocked: ${decision.reason}`)
+  }
+}
+
+// -- Check env var assignments for dangerous variables --
+
+for (const cmdInfo of commandInfos) {
+  for (const assign of cmdInfo.assigns) {
+    if (DANGEROUS_ENV_VARS.has(assign.name)) {
+      debug("env-block", { name: assign.name, value: assign.value })
+      audit.log({ tool: "Bash", input: command, decision: "prompt", reason: `dangerous env var: ${assign.name}`, layer: "safelist" })
+      prompt(`dangerous env: ${assign.name}`)
+    }
+  }
+}
+
 // No commands found (e.g., bare variable assignment) — safe
 if (commandInfos.length === 0) {
   audit.log({ tool: "Bash", input: command, decision: "allow", reason: "no commands", layer: "safelist" })
@@ -171,8 +199,12 @@ for (const cmdInfo of commandInfos) {
       const safe = isGitCommandSafe(args, protectedBranches)
       debug("git", { args, safe })
       if (safe) continue
+    } else {
+      const safe = isInspectedCommandSafe(cmdInfo)
+      debug("inspected", { name, safe })
+      if (safe) continue
     }
-    audit.log({ tool: "Bash", input: command, decision: "prompt", reason: `inspected command: ${name}`, layer: "git" })
+    audit.log({ tool: "Bash", input: command, decision: "prompt", reason: `inspected command: ${name}`, layer: "inspected" })
     prompt(`inspected: ${name}`)
   }
 

@@ -158,4 +158,50 @@ describe("isGitCommandSafe", () => {
       expect(isGitCommandSafe(["git", "reset", "--hard"])).toBe(false)
     })
   })
+
+  describe("git config — should inspect for dangerous keys", () => {
+    const safeConfigs = [
+      "git config --list",
+      "git config --get user.email",
+      "git config user.email",
+      "git config --get-regexp remote",
+      "git config user.name 'My Name'",
+    ]
+
+    for (const cmd of safeConfigs) {
+      test(`safe: ${cmd}`, () => expect(isGitCommandSafe(cmd)).toBe(true))
+    }
+
+    const dangerousConfigs = [
+      `git config alias.x "!rm -rf /"`,
+      `git config credential.helper "!evil"`,
+      `git config core.fsmonitor "evil"`,
+      `git config core.hooksPath /evil`,
+      `git config core.sshCommand "evil"`,
+      `git config filter.clean "evil"`,
+    ]
+
+    for (const cmd of dangerousConfigs) {
+      test(`unsafe: ${cmd}`, () => expect(isGitCommandSafe(cmd)).toBe(false))
+    }
+  })
+
+  describe("git -c config injection — should block dangerous configs", () => {
+    const dangerous = [
+      `git -c core.fsmonitor="rm -rf /" status`,
+      `git -c core.sshCommand="evil" fetch`,
+      `git -c core.hooksPath=/evil pull`,
+      `git -c diff.external="evil" diff`,
+      `git -c pager.log="evil" log`,
+      `git -c alias.x="!evil" status`,
+    ]
+
+    for (const cmd of dangerous) {
+      test(`unsafe: ${cmd}`, () => expect(isGitCommandSafe(cmd)).toBe(false))
+    }
+
+    test("safe: git -c color.ui=auto status", () => {
+      expect(isGitCommandSafe("git -c color.ui=auto status")).toBe(true)
+    })
+  })
 })
