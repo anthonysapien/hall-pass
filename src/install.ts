@@ -5,7 +5,7 @@
  *
  * Sets up the PreToolUse hook in Claude Code's settings:
  * 1. Checks that shfmt is installed
- * 2. Adds the hook registration to ~/.claude/settings.json
+ * 2. Adds hook registrations for Bash, Write, and Edit tools
  * 3. Adds non-Bash tool permissions (Read, Edit, Glob, Grep, WebFetch, WebSearch)
  */
 
@@ -17,6 +17,7 @@ const SETTINGS_PATH = resolve(homedir(), ".claude", "settings.json")
 const HOOK_COMMAND = `bun ${HOOK_PATH}`
 
 const NON_BASH_TOOLS = ["Read", "Edit", "Glob", "Grep", "WebFetch", "WebSearch"]
+const HOOK_MATCHERS = ["Bash", "Write", "Edit"]
 
 // -- Check shfmt --
 
@@ -62,36 +63,47 @@ for (const tool of NON_BASH_TOOLS) {
 permissions.allow = [...allow]
 settings.permissions = permissions
 
-// -- Add hook registration --
+// -- Add hook registrations for Bash, Write, and Edit --
 
 const hooks = (settings.hooks ?? {}) as Record<string, unknown[]>
 const preToolUse = (hooks.PreToolUse ?? []) as Array<Record<string, unknown>>
 
-// Check if hall-pass is already registered
-const existing = preToolUse.find((entry) => {
-  const entryHooks = entry.hooks as Array<Record<string, unknown>> | undefined
-  return entryHooks?.some((h) => {
-    const cmd = h.command as string | undefined
-    return cmd?.includes("hall-pass")
+for (const matcher of HOOK_MATCHERS) {
+  // Check if hall-pass is already registered for this matcher
+  const existing = preToolUse.find((entry) => {
+    if (entry.matcher !== matcher) return false
+    const entryHooks = entry.hooks as Array<Record<string, unknown>> | undefined
+    return entryHooks?.some((h) => {
+      const cmd = h.command as string | undefined
+      return cmd?.includes("hall-pass")
+    })
   })
-})
 
-if (existing) {
-  // Update the command path in case the project moved
-  const entryHooks = existing.hooks as Array<Record<string, unknown>>
-  const hookEntry = entryHooks.find((h) => (h.command as string)?.includes("hall-pass"))
-  if (hookEntry) hookEntry.command = HOOK_COMMAND
-  console.log("Updated existing hall-pass hook registration")
-} else {
-  preToolUse.push({
-    matcher: "Bash",
-    hooks: [{ type: "command", command: HOOK_COMMAND }],
-  })
-  console.log("Added hall-pass hook registration")
+  if (existing) {
+    // Update the command path in case the project moved
+    const entryHooks = existing.hooks as Array<Record<string, unknown>>
+    const hookEntry = entryHooks.find((h) => (h.command as string)?.includes("hall-pass"))
+    if (hookEntry) hookEntry.command = HOOK_COMMAND
+    console.log(`Updated existing hall-pass hook for ${matcher}`)
+  } else {
+    preToolUse.push({
+      matcher,
+      hooks: [{ type: "command", command: HOOK_COMMAND }],
+    })
+    console.log(`Added hall-pass hook for ${matcher}`)
+  }
 }
 
 hooks.PreToolUse = preToolUse
 settings.hooks = hooks
+
+// -- Optionally generate config --
+
+if (process.argv.includes("--init")) {
+  const { initConfig } = await import("./config.ts")
+  const configPath = await initConfig()
+  console.log("Created default config at", configPath)
+}
 
 // -- Write settings --
 

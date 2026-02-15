@@ -1,6 +1,6 @@
 # hall-pass
 
-A [PreToolUse hook](https://code.claude.com/docs/en/hooks-guide) for [Claude Code](https://claude.com/claude-code) that auto-approves safe Bash commands so you stop getting prompted for `grep foo | head -20`.
+A [PreToolUse hook](https://code.claude.com/docs/en/hooks-guide) for [Claude Code](https://claude.com/claude-code) that auto-approves safe commands, blocks dangerous ones, and protects sensitive files.
 
 ## The problem
 
@@ -8,7 +8,7 @@ Claude Code's built-in permission system can't match through pipes. `Bash(grep *
 
 ## How it works
 
-hall-pass has three layers of inspection, each using a real parser — not regex.
+hall-pass has five layers of inspection, each using a real parser — not regex.
 
 ### Layer 1: Bash commands
 
@@ -47,6 +47,25 @@ Database clients (`psql`, `mysql`, `sqlite3`) get SQL-level inspection using [pg
 | `psql -c "WITH cte AS (...) SELECT ..."` | `psql -c "INSERT INTO ..."` |
 | | `psql` (interactive session, no `-c`) |
 
+### Layer 4: File path protection
+
+Blocks Write/Edit tool calls and Bash commands that target sensitive files. Even safe commands like `cat` can't read protected files.
+
+Default protected paths (always active):
+- `**/.env`, `**/.env.*` — environment files
+- `**/credentials*`, `**/secret*` — credential files
+- `~/.ssh/**`, `~/.aws/**`, `~/.gnupg/**` — key directories
+- `**/*.pem`, `**/*id_rsa*` — key files
+
+Configurable protection levels:
+- **protected** — blocks all operations (read/write/delete)
+- **read_only** — allows reads, blocks writes and deletes
+- **no_delete** — allows reads and writes, blocks deletes
+
+### Layer 5: Audit logging
+
+Optional JSON Lines audit log records every decision with timestamp, tool, input, decision, reason, and which layer made the call.
+
 ## Setup
 
 ### Prerequisites
@@ -54,16 +73,23 @@ Database clients (`psql`, `mysql`, `sqlite3`) get SQL-level inspection using [pg
 - [Bun](https://bun.sh)
 - [shfmt](https://github.com/mvdan/sh) (`brew install shfmt`)
 
-### Install
+### Install (npm)
 
 ```bash
-git clone https://github.com/anthonysapien/hall-pass.git ~/Workspace/hall-pass
+bun add -g hall-pass
+hall-pass-install
+```
+
+### Install (from source)
+
+```bash
+git clone https://github.com/anthonyyam/hall-pass.git ~/Workspace/hall-pass
 cd ~/Workspace/hall-pass
 bun install
 bun run install-hook
 ```
 
-This adds the hook to your `~/.claude/settings.json` and sets up non-Bash tool permissions (Read, Edit, Glob, Grep, WebFetch, WebSearch).
+This registers hooks for Bash, Write, and Edit tools in `~/.claude/settings.json` and sets up non-Bash tool permissions (Read, Glob, Grep, WebFetch, WebSearch).
 
 ### Uninstall
 
@@ -77,64 +103,133 @@ bun run uninstall-hook
 bun test
 ```
 
-## Customizing
+## Configuration
 
-### Bash safelist
+Configuration is **optional** — everything works with zero config. To customize, create a config file:
 
-Edit `src/safelist.ts` to add or remove commands:
-
-```typescript
-export const SAFE_COMMANDS = new Set([
-  "bun", "npm", "grep", "curl", // ...
-])
+```bash
+# Generate default config with comments
+hall-pass-init
+# Or with the install command
+bun run install-hook --init
 ```
 
-If a command isn't in the set, it falls through to the normal Claude Code permission prompt. Nothing is silently denied.
+Config location: `~/.config/hall-pass/config.toml` (override with `HALL_PASS_CONFIG` env var).
 
-### Git protected branches
+```toml
+[commands]
+# Additional commands to auto-approve (extends built-in safelist)
+safe = ["terraform", "kubectl"]
+# Additional database clients for SQL inspection
+db_clients = ["pgcli"]
 
-Edit `src/git.ts` to change which branches require a prompt before push:
+[git]
+# Additional protected branches (extends main, master, staging, production, prod)
+protected_branches = ["release"]
 
-```typescript
-const PROTECTED_BRANCHES = new Set([
-  "main", "master", "staging", "production", "prod",
-])
+[paths]
+# Block ALL operations on these paths
+protected = ["**/production.env"]
+# Allow reads, block writes and deletes
+read_only = ["**/config/prod/**"]
+# Allow reads and writes, block deletes
+no_delete = ["**/migrations/**"]
+
+[audit]
+# Enable audit logging
+enabled = true
+# Log file path (default: ~/.config/hall-pass/audit.jsonl)
+path = "~/.config/hall-pass/audit.jsonl"
+
+[debug]
+# Enable debug output to stderr
+enabled = true
 ```
+
+User config values **extend** built-in defaults — they never replace them.
+
+## Debug mode
+
+Enable debug output to see exactly how hall-pass makes decisions:
+
+```bash
+# Via env var (one-off)
+HALL_PASS_DEBUG=1 claude
+
+# Via config (persistent)
+# Set debug.enabled = true in config.toml
+```
+
+Debug output goes to stderr so it never interferes with the hook's exit code. Format:
+
+```
+[hall-pass] input: {"toolName":"Bash","toolInput":{"command":"git status"}}
+[hall-pass] commands: ["git"]
+[hall-pass] git: {"args":"git status","safe":true}
+```
+
+## Audit log
+
+When enabled, writes one JSON line per decision to `~/.config/hall-pass/audit.jsonl`:
+
+```json
+{"ts":"2025-01-15T10:30:00.000Z","tool":"Bash","input":"git status","decision":"allow","reason":"all commands safe","layer":"safelist"}
+{"ts":"2025-01-15T10:30:01.000Z","tool":"Write","input":"/project/.env","decision":"prompt","reason":"matches protected path **/.env","layer":"paths"}
+```
+
+Fields: `ts` (ISO 8601), `tool` (Bash/Write/Edit), `input` (command or file path), `decision` (allow/prompt), `reason` (human-readable), `layer` (safelist/git/sql/paths/unknown).
 
 ## How the hook decides
 
 ```
-Command from Claude Code
+Input from Claude Code: { tool_name, tool_input }
          |
          v
-   Parse with shfmt
+   Load config + init debug/audit
          |
-         v
-   For each command invocation:
+         +-- Write/Edit tool?
+         |     Check file path against protection rules
+         |     Protected → prompt | Safe → allow
          |
-         +-- In SAFE_COMMANDS? --> allow
-         |
-         +-- git? --> inspect subcommand + flags
-         |            safe op? --> allow
-         |            destructive? --> prompt
-         |
-         +-- psql/mysql/sqlite3? --> parse SQL
-         |            read-only? --> allow
-         |            write? --> prompt
-         |
-         +-- unknown --> prompt
+         +-- Bash tool?
+               Parse command with shfmt
+               |
+               For each command invocation:
+               |
+               +-- Path args match protected files? → prompt
+               |
+               +-- In safelist? → allow
+               |
+               +-- git? → inspect subcommand + flags
+               |          safe op? → allow
+               |          destructive? → prompt
+               |
+               +-- psql/mysql/sqlite3? → parse SQL
+               |          read-only? → allow
+               |          write? → prompt
+               |
+               +-- unknown → prompt
 ```
 
 ## Project structure
 
 ```
 src/
-  hook.ts        Entry point — reads stdin, runs shfmt, checks safelist
+  hook.ts        Entry point — reads stdin, routes by tool, checks all layers
   parser.ts      AST walker — extracts command names from shfmt JSON
   safelist.ts    Safe commands, inspected commands, DB clients
   git.ts         Git subcommand + flag safety checker
   sql.ts         SQL statement read-only checker
-  install.ts     Registers the hook in ~/.claude/settings.json
-  uninstall.ts   Removes the hook
-  *.test.ts      Tests (160+)
+  config.ts      TOML config loading with defaults and merging
+  paths.ts       File path protection with glob matching
+  debug.ts       Debug logging to stderr
+  audit.ts       Audit logging to JSON Lines file
+  cli.ts         CLI for hall-pass-init
+  install.ts     Registers hooks in ~/.claude/settings.json
+  uninstall.ts   Removes hooks
+  *.test.ts      Tests
 ```
+
+## License
+
+MIT

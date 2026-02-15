@@ -6,6 +6,7 @@
       "name": "hall-pass",
       "dependencies": {
         "pgsql-ast-parser": "^12.0.2",
+        "smol-toml": "^1.6.0",
       },
       "devDependencies": {
         "@types/bun": "latest",
@@ -34,6 +35,8 @@
     "randexp": ["randexp@0.4.6", "", { "dependencies": { "discontinuous-range": "1.0.0", "ret": "~0.1.10" } }, "sha512-80WNmd9DA0tmZrw9qQa62GPPWfuXJknrmVmLcxvq4uZBdYqb1wYoKTmnlGUchvVWe0XiLupYkBoXVOxz3C8DYQ=="],
 
     "ret": ["ret@0.1.15", "", {}, "sha512-TTlYpa+OL+vMMNG24xSlQGEJ3B/RzEfUlLct7b5G/ytav+wPrplCpVMFuwzXbkecJrb6IYo1iFb0S9v37754mg=="],
+
+    "smol-toml": ["smol-toml@1.6.0", "", {}, "sha512-4zemZi0HvTnYwLfrpk/CF9LOd9Lt87kAt50GnqhMpyF9U3poDAP2+iukq2bZsO/ufegbYehBkqINbsWxj4l4cw=="],
 
     "undici-types": ["undici-types@7.16.0", "", {}, "sha512-Zz+aZWSj8LE6zoxD+xrjh4VfkIG8Ya6LvYkZqtUQGJPZjYl53ypCaUwWqo7eI0x66KBGeRo+mlBEkMSeSZ38Nw=="],
   }
