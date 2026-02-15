@@ -6,7 +6,7 @@
  */
 export const SAFE_COMMANDS = new Set([
   // Version control
-  "git", "gh",
+  "gh",
 
   // JS/TS runtimes & package managers
   "bun", "npm", "npx", "node",
@@ -36,6 +36,18 @@ export const SAFE_COMMANDS = new Set([
 
   // Scripting
   "python3", "python", "xargs", "date",
+])
+
+/**
+ * Database clients that get deeper inspection.
+ * Not auto-approved — their SQL is parsed to check if it's read-only.
+ */
+/**
+ * Commands that get deeper inspection of their arguments.
+ * Not auto-approved — their subcommands/flags are checked for safety.
+ */
+export const INSPECTED_COMMANDS = new Set([
+  "git",
 ])
 
 /**

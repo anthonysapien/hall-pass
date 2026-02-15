@@ -30,11 +30,55 @@ describe("hook integration", () => {
       "git log --oneline -5 | cat",
       "find . -name '*.ts' | wc -l",
       "echo hello && echo world || echo fallback",
+      "lsof -i :3334 | grep LISTEN 2>/dev/null",
     ]
 
     for (const cmd of allowed) {
       test(cmd, async () => {
         expect(await runHook(cmd)).toBe(0)
+      })
+    }
+  })
+
+  describe("git — should ALLOW safe operations (exit 0)", () => {
+    const allowed = [
+      "git status",
+      "git log --oneline -5",
+      "git diff --stat",
+      "git add . && git commit -m 'msg' && git push",
+      "git log --oneline -5 | cat",
+      "git fetch && git pull",
+      "git stash && git checkout main && git stash pop",
+      "git -C /some/path status",
+      "git branch -a",
+      "git push -u origin feat/search",
+    ]
+
+    for (const cmd of allowed) {
+      test(cmd, async () => {
+        expect(await runHook(cmd)).toBe(0)
+      })
+    }
+  })
+
+  describe("git — should PROMPT for destructive ops (exit 1)", () => {
+    const prompted = [
+      "git push --force",
+      "git push -f origin feat/search",
+      "git reset --hard",
+      "git reset --hard HEAD~3",
+      "git clean -f",
+      "git checkout .",
+      "git restore .",
+      "git branch -D feat/old",
+      "git push origin main",
+      "git stash drop",
+      "git stash clear",
+    ]
+
+    for (const cmd of prompted) {
+      test(cmd, async () => {
+        expect(await runHook(cmd)).toBe(1)
       })
     }
   })

@@ -16,9 +16,10 @@
  *   1 = no opinion (unknown command, fall through to permission prompt)
  */
 
-import { SAFE_COMMANDS, DB_CLIENTS } from "./safelist.ts"
-import { extractCommands } from "./parser.ts"
+import { SAFE_COMMANDS, DB_CLIENTS, INSPECTED_COMMANDS } from "./safelist.ts"
+import { extractCommandInfos } from "./parser.ts"
 import { extractSqlFromPsql, isSqlReadOnly } from "./sql.ts"
+import { isGitCommandSafe } from "./git.ts"
 
 // -- Read hook input from stdin --
 
@@ -56,21 +57,26 @@ try {
 
 // -- Check every command in the AST against the safelist --
 
-const commands = extractCommands(ast)
+const commandInfos = extractCommandInfos(ast)
 
 // No commands found (e.g., bare variable assignment) — safe
-if (commands.length === 0) {
+if (commandInfos.length === 0) {
   process.exit(0)
 }
 
-for (const cmd of commands) {
-  if (SAFE_COMMANDS.has(cmd)) continue
+for (const { name, args } of commandInfos) {
+  if (SAFE_COMMANDS.has(name)) continue
 
-  // DB clients get deeper inspection — parse the SQL
-  if (DB_CLIENTS.has(cmd)) {
+  // Commands that get deeper argument inspection
+  if (INSPECTED_COMMANDS.has(name)) {
+    if (name === "git" && isGitCommandSafe(args.join(" "))) continue
+    process.exit(1)
+  }
+
+  // DB clients get SQL-level inspection
+  if (DB_CLIENTS.has(name)) {
     const sql = extractSqlFromPsql(command)
     if (sql && isSqlReadOnly(sql)) continue
-    // No -c flag (interactive session) or write SQL — prompt
     process.exit(1)
   }
 
