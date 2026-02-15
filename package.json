@@ -1,0 +1,17 @@
+{
+  "name": "hall-pass",
+  "version": "0.1.0",
+  "description": "PreToolUse hook for Claude Code that auto-approves safe Bash commands using shfmt AST parsing",
+  "module": "src/hook.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "install-hook": "bun src/install.ts",
+    "uninstall-hook": "bun src/uninstall.ts",
+    "test": "bun test",
+    "typecheck": "bun build src/hook.ts --no-bundle --no-emit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
