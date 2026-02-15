@@ -31,6 +31,7 @@ describe("hook integration", () => {
       "find . -name '*.ts' | wc -l",
       "echo hello && echo world || echo fallback",
       "lsof -i :3334 | grep LISTEN 2>/dev/null",
+      "TEST_BASE_URL=http://localhost:3333 bun test server/tests/search.test.ts 2>&1",
     ]
 
     for (const cmd of allowed) {
