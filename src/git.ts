@@ -17,7 +17,7 @@ const SAFE_SUBCOMMANDS = new Set([
   "describe", "rev-parse", "rev-list", "ls-files", "ls-tree",
   "cat-file", "reflog", "shortlog", "blame", "bisect",
   "name-rev", "cherry", "count-objects", "fsck", "verify-pack",
-  "whatchanged", "config",
+  "whatchanged",
 
   // Safe local writes
   "add", "commit", "stash", "fetch", "pull", "merge",
@@ -29,6 +29,22 @@ const SAFE_SUBCOMMANDS = new Set([
   // Maintenance
   "gc", "prune", "repack",
 ])
+
+/**
+ * Git config keys that execute commands. Setting these is dangerous.
+ */
+const DANGEROUS_GIT_CONFIGS = [
+  "core.fsmonitor",
+  "core.hooksPath",
+  "core.sshCommand",
+  "diff.external",
+  "merge.tool",
+  "credential.helper",
+  "pager.",
+  "alias.",
+  "filter.",
+  "remote.", // remote.*.url could point to malicious repo
+]
 
 /**
  * Git subcommands that are safe ONLY on non-protected branches.
@@ -69,17 +85,23 @@ const ALWAYS_DESTRUCTIVE = new Set([
 /**
  * Extract the git subcommand and flags from a full git command string.
  * Handles: git -C /path subcommand --flags args
+ * Also captures -c config values for security inspection.
  */
-function parseGitCommand(args: string[]): { subcommand: string; flags: string[]; rest: string[] } {
+function parseGitCommand(args: string[]): { subcommand: string; flags: string[]; rest: string[]; configs: string[] } {
   const remaining = [...args]
+  const configs: string[] = []
 
   // Skip git-level flags before the subcommand
   // These are flags that go between "git" and the subcommand
   while (remaining.length > 0) {
     const arg = remaining[0]
-    if (arg === "-C" || arg === "-c" || arg === "--git-dir" || arg === "--work-tree") {
+    if (arg === "-C" || arg === "--git-dir" || arg === "--work-tree") {
       remaining.shift() // the flag
       remaining.shift() // its value
+    } else if (arg === "-c") {
+      remaining.shift() // the -c flag
+      const configVal = remaining.shift() // the config key=value
+      if (configVal) configs.push(configVal)
     } else if (arg.startsWith("-")) {
       remaining.shift() // other git-level flags like --no-pager
     } else {
@@ -99,7 +121,7 @@ function parseGitCommand(args: string[]): { subcommand: string; flags: string[];
     }
   }
 
-  return { subcommand, flags, rest }
+  return { subcommand, flags, rest, configs }
 }
 
 /**
@@ -116,12 +138,39 @@ export function isGitCommandSafe(argsOrCommand: string[] | string, customProtect
   // Remove "git" if it's the first token
   if (args[0] === "git") args.shift()
 
-  const { subcommand, flags, rest } = parseGitCommand(args)
+  const { subcommand, flags, rest, configs } = parseGitCommand(args)
 
   if (!subcommand) return true // bare "git" — safe (just shows help)
 
+  // Check for dangerous -c config values (e.g., git -c core.fsmonitor="evil" status)
+  for (const config of configs) {
+    const key = config.split("=")[0].toLowerCase()
+    for (const dangerous of DANGEROUS_GIT_CONFIGS) {
+      if (key.startsWith(dangerous.toLowerCase())) return false
+    }
+  }
+
   // Always destructive — prompt no matter what
   if (ALWAYS_DESTRUCTIVE.has(subcommand)) return false
+
+  // git config — safe for reads, dangerous for writes that set executable values
+  if (subcommand === "config") {
+    // git config --get, --list, --get-regexp, etc. = safe reads
+    const readFlags = new Set(["--get", "--get-all", "--get-regexp", "--list", "-l", "--show-origin", "--show-scope"])
+    for (const flag of flags) {
+      if (readFlags.has(flag)) return true
+    }
+    // git config key (no value) = read, git config key value = write
+    // If there are 2+ positional args, it's a write — check if the key is dangerous
+    if (rest.length >= 2) {
+      const key = rest[0].toLowerCase()
+      for (const dangerous of DANGEROUS_GIT_CONFIGS) {
+        if (key.startsWith(dangerous.toLowerCase())) return false
+      }
+    }
+    // Single arg = read, or non-dangerous write
+    return true
+  }
 
   // Check for destructive flags on otherwise-safe commands
   const dangerousFlags = DESTRUCTIVE_FLAGS[subcommand]
