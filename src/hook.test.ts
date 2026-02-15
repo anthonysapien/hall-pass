@@ -61,6 +61,40 @@ describe("hook integration", () => {
     expect(await runHook("")).toBe(1)
   })
 
+  describe("psql — should ALLOW read-only SQL (exit 0)", () => {
+    const allowed = [
+      `psql postgres://user:pass@localhost:5433/db -t -c "SELECT * FROM users"`,
+      `psql postgres://user:pass@localhost:5433/db -c "SELECT DISTINCT advertiser_id FROM search_index LIMIT 1" 2>&1`,
+      `psql postgres://localhost/db -t -c "SELECT count(*) FROM orders"`,
+      `psql -c 'SHOW search_path'`,
+    ]
+
+    for (const cmd of allowed) {
+      test(cmd, async () => {
+        expect(await runHook(cmd)).toBe(0)
+      })
+    }
+  })
+
+  describe("psql — should PROMPT for writes (exit 1)", () => {
+    const prompted = [
+      `psql postgres://localhost/db -c "DROP TABLE users"`,
+      `psql -c "INSERT INTO users VALUES (1, 'test')"`,
+      `psql -c "DELETE FROM users WHERE id = 1"`,
+      `psql -c "UPDATE users SET name = 'test'"`,
+      `psql -c "TRUNCATE users"`,
+      `psql -c "SELECT 1; DROP TABLE users"`,
+      // Interactive session (no -c flag) — prompt
+      `psql postgres://localhost/db`,
+    ]
+
+    for (const cmd of prompted) {
+      test(cmd, async () => {
+        expect(await runHook(cmd)).toBe(1)
+      })
+    }
+  })
+
   test("invalid JSON input falls through", async () => {
     const proc = Bun.spawn(["bun", HOOK_PATH], {
       stdin: new Response("not json"),

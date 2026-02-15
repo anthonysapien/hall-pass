@@ -37,3 +37,13 @@ export const SAFE_COMMANDS = new Set([
   // Scripting
   "python3", "python", "xargs", "date",
 ])
+
+/**
+ * Database clients that get deeper inspection.
+ * Not auto-approved — their SQL is parsed to check if it's read-only.
+ */
+export const DB_CLIENTS = new Set([
+  "psql",
+  "mysql",
+  "sqlite3",
+])

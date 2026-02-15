@@ -16,8 +16,9 @@
  *   1 = no opinion (unknown command, fall through to permission prompt)
  */
 
-import { SAFE_COMMANDS } from "./safelist.ts"
+import { SAFE_COMMANDS, DB_CLIENTS } from "./safelist.ts"
 import { extractCommands } from "./parser.ts"
+import { extractSqlFromPsql, isSqlReadOnly } from "./sql.ts"
 
 // -- Read hook input from stdin --
 
@@ -63,9 +64,18 @@ if (commands.length === 0) {
 }
 
 for (const cmd of commands) {
-  if (!SAFE_COMMANDS.has(cmd)) {
+  if (SAFE_COMMANDS.has(cmd)) continue
+
+  // DB clients get deeper inspection — parse the SQL
+  if (DB_CLIENTS.has(cmd)) {
+    const sql = extractSqlFromPsql(command)
+    if (sql && isSqlReadOnly(sql)) continue
+    // No -c flag (interactive session) or write SQL — prompt
     process.exit(1)
   }
+
+  // Unknown command — prompt
+  process.exit(1)
 }
 
 process.exit(0)
