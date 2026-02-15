@@ -2,32 +2,51 @@ import { describe, test, expect } from "bun:test"
 
 const HOOK_PATH = new URL("./hook.ts", import.meta.url).pathname
 
-/** Run the hook with a simulated Claude Code Bash input and return the exit code */
-async function runHook(command: string): Promise<number> {
+interface HookResult {
+  exitCode: number
+  stdout: string
+}
+
+/** Run the hook with a simulated Claude Code Bash input */
+async function runHook(command: string): Promise<HookResult> {
   const input = JSON.stringify({ tool_name: "Bash", tool_input: { command } })
   const proc = Bun.spawn(["bun", HOOK_PATH], {
     stdin: new Response(input),
     stdout: "pipe",
     stderr: "pipe",
   })
+  const stdout = await new Response(proc.stdout).text()
   await proc.exited
-  return proc.exitCode ?? 1
+  return { exitCode: proc.exitCode ?? 1, stdout }
 }
 
-/** Run the hook with a Write/Edit tool input and return the exit code */
-async function runHookForTool(toolName: string, toolInput: Record<string, unknown>): Promise<number> {
+/** Run the hook with a Write/Edit tool input */
+async function runHookForTool(toolName: string, toolInput: Record<string, unknown>): Promise<HookResult> {
   const input = JSON.stringify({ tool_name: toolName, tool_input: toolInput })
   const proc = Bun.spawn(["bun", HOOK_PATH], {
     stdin: new Response(input),
     stdout: "pipe",
     stderr: "pipe",
   })
+  const stdout = await new Response(proc.stdout).text()
   await proc.exited
-  return proc.exitCode ?? 1
+  return { exitCode: proc.exitCode ?? 1, stdout }
+}
+
+/** Check that the hook allowed (exit 0 + permissionDecision: "allow" on stdout) */
+function expectAllow(result: HookResult) {
+  expect(result.exitCode).toBe(0)
+  const parsed = JSON.parse(result.stdout)
+  expect(parsed.hookSpecificOutput.permissionDecision).toBe("allow")
+}
+
+/** Check that the hook prompted (exit 1, no allow JSON) */
+function expectPrompt(result: HookResult) {
+  expect(result.exitCode).toBe(1)
 }
 
 describe("hook integration", () => {
-  describe("should ALLOW (exit 0)", () => {
+  describe("should ALLOW (exit 0 + JSON)", () => {
     const allowed = [
       "git status",
       "git add . && git commit -m 'msg' && git push",
@@ -48,12 +67,12 @@ describe("hook integration", () => {
 
     for (const cmd of allowed) {
       test(cmd, async () => {
-        expect(await runHook(cmd)).toBe(0)
+        expectAllow(await runHook(cmd))
       })
     }
   })
 
-  describe("git — should ALLOW safe operations (exit 0)", () => {
+  describe("git — should ALLOW safe operations (exit 0 + JSON)", () => {
     const allowed = [
       "git status",
       "git log --oneline -5",
@@ -69,7 +88,7 @@ describe("hook integration", () => {
 
     for (const cmd of allowed) {
       test(cmd, async () => {
-        expect(await runHook(cmd)).toBe(0)
+        expectAllow(await runHook(cmd))
       })
     }
   })
@@ -91,7 +110,7 @@ describe("hook integration", () => {
 
     for (const cmd of prompted) {
       test(cmd, async () => {
-        expect(await runHook(cmd)).toBe(1)
+        expectPrompt(await runHook(cmd))
       })
     }
   })
@@ -109,16 +128,16 @@ describe("hook integration", () => {
 
     for (const cmd of prompted) {
       test(cmd, async () => {
-        expect(await runHook(cmd)).toBe(1)
+        expectPrompt(await runHook(cmd))
       })
     }
   })
 
   test("empty command falls through", async () => {
-    expect(await runHook("")).toBe(1)
+    expectPrompt(await runHook(""))
   })
 
-  describe("psql — should ALLOW read-only SQL (exit 0)", () => {
+  describe("psql — should ALLOW read-only SQL (exit 0 + JSON)", () => {
     const allowed = [
       `psql postgres://user:pass@localhost:5433/db -t -c "SELECT * FROM users"`,
       `psql postgres://user:pass@localhost:5433/db -c "SELECT DISTINCT advertiser_id FROM search_index LIMIT 1" 2>&1`,
@@ -128,7 +147,7 @@ describe("hook integration", () => {
 
     for (const cmd of allowed) {
       test(cmd, async () => {
-        expect(await runHook(cmd)).toBe(0)
+        expectAllow(await runHook(cmd))
       })
     }
   })
@@ -147,7 +166,7 @@ describe("hook integration", () => {
 
     for (const cmd of prompted) {
       test(cmd, async () => {
-        expect(await runHook(cmd)).toBe(1)
+        expectPrompt(await runHook(cmd))
       })
     }
   })
@@ -161,26 +180,35 @@ describe("hook integration", () => {
     await proc.exited
     expect(proc.exitCode).toBe(1)
   })
+
+  test("allow response contains valid JSON with permissionDecision", async () => {
+    const result = await runHook("echo hello")
+    expect(result.exitCode).toBe(0)
+    const parsed = JSON.parse(result.stdout)
+    expect(parsed.hookSpecificOutput.hookEventName).toBe("PreToolUse")
+    expect(parsed.hookSpecificOutput.permissionDecision).toBe("allow")
+    expect(typeof parsed.hookSpecificOutput.permissionDecisionReason).toBe("string")
+  })
 })
 
 describe("Write/Edit tool integration", () => {
   describe("Write tool", () => {
-    test("safe path → exit 0", async () => {
-      expect(await runHookForTool("Write", { file_path: "/tmp/safe-file.ts" })).toBe(0)
+    test("safe path → allow", async () => {
+      expectAllow(await runHookForTool("Write", { file_path: "/tmp/safe-file.ts" }))
     })
 
-    test("no file_path → exit 0", async () => {
-      expect(await runHookForTool("Write", {})).toBe(0)
+    test("no file_path → allow", async () => {
+      expectAllow(await runHookForTool("Write", {}))
     })
   })
 
   describe("Edit tool", () => {
-    test("safe path → exit 0", async () => {
-      expect(await runHookForTool("Edit", { file_path: "/tmp/safe-file.ts" })).toBe(0)
+    test("safe path → allow", async () => {
+      expectAllow(await runHookForTool("Edit", { file_path: "/tmp/safe-file.ts" }))
     })
 
-    test("no file_path → exit 0", async () => {
-      expect(await runHookForTool("Edit", {})).toBe(0)
+    test("no file_path → allow", async () => {
+      expectAllow(await runHookForTool("Edit", {}))
     })
   })
 })

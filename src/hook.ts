@@ -7,9 +7,11 @@
  *   - Bash: safelist/git/sql/path checking with shfmt AST parsing
  *   - Write/Edit: file path protection
  *
- * Exit codes:
- *   0 = allow
- *   1 = no opinion (fall through to permission prompt)
+ * Decision protocol:
+ *   Exit 0 + JSON { permissionDecision: "allow" } = auto-approve (skip prompt)
+ *   Exit 0 + JSON { permissionDecision: "deny" } = block
+ *   Exit 2 = block (stderr sent to Claude)
+ *   Exit 1 = no opinion (fall through to normal permission prompt)
  */
 
 // Diagnostic log — always writes to /tmp so we can debug hook failures
@@ -17,9 +19,25 @@ const DIAG = "/tmp/hall-pass-diag.log"
 function diag(msg: string) {
   try { require("fs").appendFileSync(DIAG, `${new Date().toISOString()} ${msg}\n`) } catch {}
 }
-function exit(code: number, reason: string): never {
-  diag(`exit=${code} ${reason}`)
-  process.exit(code)
+
+/** Output a permissionDecision JSON to stdout and exit. */
+function allow(reason: string): never {
+  diag(`ALLOW ${reason}`)
+  const output = JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "allow",
+      permissionDecisionReason: reason,
+    },
+  })
+  process.stdout.write(output)
+  process.exit(0)
+}
+
+/** Exit with no opinion — falls through to normal permission prompt. */
+function prompt(reason: string): never {
+  diag(`PROMPT ${reason}`)
+  process.exit(1)
 }
 
 import { SAFE_COMMANDS, DB_CLIENTS, INSPECTED_COMMANDS } from "./safelist.ts"
@@ -71,7 +89,7 @@ if (toolName === "Write" || toolName === "Edit") {
   const filePath = toolInput.file_path as string
   if (!filePath) {
     debug("write/edit", "no file_path, allowing")
-    exit(0, "write/edit no path")
+    allow("write/edit no path")
   }
 
   debug("write/edit", { filePath })
@@ -80,18 +98,18 @@ if (toolName === "Write" || toolName === "Edit") {
 
   if (!decision.allowed) {
     audit.log({ tool: toolName, input: filePath, decision: "prompt", reason: decision.reason, layer: "paths" })
-    exit(1, `path-blocked: ${decision.reason}`)
+    prompt(`path-blocked: ${decision.reason}`)
   }
 
   audit.log({ tool: toolName, input: filePath, decision: "allow", reason: "no path match", layer: "paths" })
-  exit(0, "write/edit allowed")
+  allow("write/edit allowed")
 }
 
 // -- Bash path --
 
 if (!command) {
   debug("bash", "empty command")
-  exit(1, "empty command")
+  prompt("empty command")
 }
 
 debug("bash", { command })
@@ -109,7 +127,7 @@ await proc.exited
 
 if (proc.exitCode !== 0) {
   debug("shfmt", "parse failed")
-  exit(1, "shfmt failed")
+  prompt("shfmt failed")
 }
 
 let ast: unknown
@@ -117,7 +135,7 @@ try {
   ast = JSON.parse(stdout)
 } catch {
   debug("shfmt", "JSON parse failed")
-  exit(1, "shfmt json failed")
+  prompt("shfmt json failed")
 }
 
 // -- Check every command in the AST --
@@ -128,7 +146,7 @@ debug("commands", commandInfos.map(c => c.name))
 // No commands found (e.g., bare variable assignment) — safe
 if (commandInfos.length === 0) {
   audit.log({ tool: "Bash", input: command, decision: "allow", reason: "no commands", layer: "safelist" })
-  exit(0, "no commands")
+  allow("no commands (variable assignment)")
 }
 
 for (const cmdInfo of commandInfos) {
@@ -139,7 +157,7 @@ for (const cmdInfo of commandInfos) {
   if (!pathDecision.allowed) {
     debug("path-block", { name, reason: pathDecision.reason })
     audit.log({ tool: "Bash", input: command, decision: "prompt", reason: pathDecision.reason, layer: "paths" })
-    exit(1, `path-blocked: ${name} ${pathDecision.reason}`)
+    prompt(`path-blocked: ${name} ${pathDecision.reason}`)
   }
 
   if (safeCommands.has(name)) {
@@ -155,7 +173,7 @@ for (const cmdInfo of commandInfos) {
       if (safe) continue
     }
     audit.log({ tool: "Bash", input: command, decision: "prompt", reason: `inspected command: ${name}`, layer: "git" })
-    exit(1, `inspected: ${name}`)
+    prompt(`inspected: ${name}`)
   }
 
   // DB clients get SQL-level inspection
@@ -165,14 +183,14 @@ for (const cmdInfo of commandInfos) {
     debug("sql", { name, sql, readOnly })
     if (sql && readOnly) continue
     audit.log({ tool: "Bash", input: command, decision: "prompt", reason: `db client: ${name}`, layer: "sql" })
-    exit(1, `db: ${name}`)
+    prompt(`db: ${name}`)
   }
 
   // Unknown command — prompt
   debug("unknown", { name, decision: "prompt" })
   audit.log({ tool: "Bash", input: command, decision: "prompt", reason: `unknown command: ${name}`, layer: "unknown" })
-  exit(1, `unknown: ${name}`)
+  prompt(`unknown: ${name}`)
 }
 
 audit.log({ tool: "Bash", input: command, decision: "allow", reason: "all commands safe", layer: "safelist" })
-exit(0, "all safe")
+allow("all commands safe")
