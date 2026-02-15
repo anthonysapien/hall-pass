@@ -171,6 +171,63 @@ describe("hook integration", () => {
     }
   })
 
+  describe("mysql — should ALLOW read-only SQL (exit 0 + JSON)", () => {
+    const allowed = [
+      `mysql -u root -e "SELECT * FROM users"`,
+      `mysql mydb -e "SHOW TABLES"`,
+      `mysql mydb --execute "SELECT count(*) FROM orders"`,
+    ]
+
+    for (const cmd of allowed) {
+      test(cmd, async () => {
+        expectAllow(await runHook(cmd))
+      })
+    }
+  })
+
+  describe("mysql — should PROMPT for writes (exit 1)", () => {
+    const prompted = [
+      `mysql mydb -e "DROP TABLE users"`,
+      `mysql -e "INSERT INTO users VALUES (1, 'test')"`,
+      // Interactive session (no -e flag) — prompt
+      `mysql -u root mydb`,
+    ]
+
+    for (const cmd of prompted) {
+      test(cmd, async () => {
+        expectPrompt(await runHook(cmd))
+      })
+    }
+  })
+
+  describe("sqlite3 — should ALLOW read-only SQL (exit 0 + JSON)", () => {
+    const allowed = [
+      `sqlite3 db.sqlite "SELECT * FROM users"`,
+      `sqlite3 -header -column db.sqlite "SELECT count(*) FROM orders"`,
+    ]
+
+    for (const cmd of allowed) {
+      test(cmd, async () => {
+        expectAllow(await runHook(cmd))
+      })
+    }
+  })
+
+  describe("sqlite3 — should PROMPT for writes (exit 1)", () => {
+    const prompted = [
+      `sqlite3 db.sqlite "DROP TABLE users"`,
+      `sqlite3 db.sqlite "INSERT INTO users VALUES (1, 'test')"`,
+      // Interactive session (no SQL arg) — prompt
+      `sqlite3 db.sqlite`,
+    ]
+
+    for (const cmd of prompted) {
+      test(cmd, async () => {
+        expectPrompt(await runHook(cmd))
+      })
+    }
+  })
+
   test("invalid JSON input falls through", async () => {
     const proc = Bun.spawn(["bun", HOOK_PATH], {
       stdin: new Response("not json"),

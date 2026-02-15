@@ -3,7 +3,7 @@
  *
  * Parses SQL using pgsql-ast-parser and checks if all statements
  * are read-only. Used when the Bash command is a database client
- * like psql.
+ * like psql, mysql, or sqlite3.
  *
  * Returns:
  *   "allow"   — all statements are read-only
@@ -20,18 +20,78 @@ const READ_ONLY_TYPES = new Set([
 ])
 
 /**
- * Extract the SQL string from a psql command's -c argument.
- * Returns null if no -c flag found.
+ * Flags that introduce an inline SQL string, per DB client.
+ * The value after the flag is the SQL to inspect.
+ */
+const SQL_FLAGS: Record<string, Set<string>> = {
+  psql:    new Set(["-c", "--command"]),
+  mysql:   new Set(["-e", "--execute"]),
+  sqlite3: new Set([]),  // sqlite3 takes SQL as a positional arg
+}
+
+/**
+ * Extract the SQL string from a DB client command's parsed args.
+ *
+ * Works with all supported clients:
+ *   psql -c "SELECT ..."       / psql --command "SELECT ..."
+ *   mysql -e "SELECT ..."      / mysql --execute "SELECT ..."
+ *   sqlite3 db.sqlite "SELECT ..."  (positional after db path)
+ *
+ * Args come from the shfmt parser, so quotes are already stripped.
+ * Returns null if no inline SQL found (e.g., interactive session).
+ */
+export function extractSqlFromArgs(clientName: string, args: string[]): string | null {
+  const flags = SQL_FLAGS[clientName]
+
+  // sqlite3: SQL is a positional arg (the one after the database path)
+  // sqlite3 [options] db_file "SQL"
+  if (clientName === "sqlite3") {
+    // Walk args, skip flags and their values, find positional args
+    const positional: string[] = []
+    for (let i = 1; i < args.length; i++) {
+      const arg = args[i]
+      if (arg === "-cmd" || arg === "-separator" || arg === "-newline") {
+        i++ // skip value
+      } else if (arg.startsWith("-")) {
+        continue // skip boolean flags
+      } else {
+        positional.push(arg)
+      }
+    }
+    // First positional = db file, second = SQL
+    return positional.length >= 2 ? positional[1] : null
+  }
+
+  // psql/mysql: look for -c/-e/--command/--execute followed by SQL
+  if (flags) {
+    for (let i = 1; i < args.length; i++) {
+      const arg = args[i]
+      // Handle --flag=value form
+      for (const flag of flags) {
+        if (arg.startsWith(flag + "=")) {
+          return arg.slice(flag.length + 1)
+        }
+      }
+      // Handle --flag value form
+      if (flags.has(arg) && i + 1 < args.length) {
+        return args[i + 1]
+      }
+    }
+  }
+
+  return null
+}
+
+/**
+ * @deprecated Use extractSqlFromArgs instead. Kept for backward compatibility.
  */
 export function extractSqlFromPsql(command: string): string | null {
-  // Match -c followed by a quoted or unquoted SQL string
-  // psql ... -c "SELECT ..." or psql ... -c 'SELECT ...' or psql ... --command="SELECT ..."
   const patterns = [
     /-c\s+"([^"]+)"/,
     /-c\s+'([^']+)'/,
     /--command="([^"]+)"/,
     /--command='([^']+)'/,
-    /-c\s+(\S+)/,  // unquoted single-word (rare but possible)
+    /-c\s+(\S+)/,
   ]
 
   for (const pattern of patterns) {

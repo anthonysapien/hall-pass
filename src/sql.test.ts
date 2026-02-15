@@ -1,7 +1,85 @@
 import { describe, test, expect } from "bun:test"
-import { extractSqlFromPsql, isSqlReadOnly } from "./sql.ts"
+import { extractSqlFromArgs, extractSqlFromPsql, isSqlReadOnly } from "./sql.ts"
 
-describe("extractSqlFromPsql", () => {
+describe("extractSqlFromArgs", () => {
+  describe("psql", () => {
+    test("-c flag", () => {
+      const args = ["psql", "postgres://user:pass@localhost:5433/db", "-t", "-c", "SELECT * FROM users"]
+      expect(extractSqlFromArgs("psql", args)).toBe("SELECT * FROM users")
+    })
+
+    test("--command flag", () => {
+      const args = ["psql", "--command", "EXPLAIN SELECT 1"]
+      expect(extractSqlFromArgs("psql", args)).toBe("EXPLAIN SELECT 1")
+    })
+
+    test("--command=value form", () => {
+      const args = ["psql", "--command=EXPLAIN SELECT 1"]
+      expect(extractSqlFromArgs("psql", args)).toBe("EXPLAIN SELECT 1")
+    })
+
+    test("no -c flag returns null", () => {
+      const args = ["psql", "postgres://localhost:5433/db"]
+      expect(extractSqlFromArgs("psql", args)).toBeNull()
+    })
+
+    test("complex connection string with -c", () => {
+      const args = ["psql", "postgres://dc:dc@localhost:5433/dc", "-t", "-c", "SELECT DISTINCT id FROM search_index LIMIT 1"]
+      expect(extractSqlFromArgs("psql", args)).toBe("SELECT DISTINCT id FROM search_index LIMIT 1")
+    })
+  })
+
+  describe("mysql", () => {
+    test("-e flag", () => {
+      const args = ["mysql", "-u", "root", "-e", "SELECT * FROM users"]
+      expect(extractSqlFromArgs("mysql", args)).toBe("SELECT * FROM users")
+    })
+
+    test("--execute flag", () => {
+      const args = ["mysql", "mydb", "--execute", "SHOW TABLES"]
+      expect(extractSqlFromArgs("mysql", args)).toBe("SHOW TABLES")
+    })
+
+    test("--execute=value form", () => {
+      const args = ["mysql", "mydb", "--execute=SHOW TABLES"]
+      expect(extractSqlFromArgs("mysql", args)).toBe("SHOW TABLES")
+    })
+
+    test("no -e flag returns null (interactive)", () => {
+      const args = ["mysql", "-u", "root", "mydb"]
+      expect(extractSqlFromArgs("mysql", args)).toBeNull()
+    })
+  })
+
+  describe("sqlite3", () => {
+    test("positional SQL after db path", () => {
+      const args = ["sqlite3", "db.sqlite", "SELECT * FROM users"]
+      expect(extractSqlFromArgs("sqlite3", args)).toBe("SELECT * FROM users")
+    })
+
+    test("with flags before db path", () => {
+      const args = ["sqlite3", "-header", "-column", "db.sqlite", "SELECT count(*) FROM orders"]
+      expect(extractSqlFromArgs("sqlite3", args)).toBe("SELECT count(*) FROM orders")
+    })
+
+    test("with -cmd flag (skips value)", () => {
+      const args = ["sqlite3", "-cmd", ".headers on", "test.db", "SELECT 1"]
+      expect(extractSqlFromArgs("sqlite3", args)).toBe("SELECT 1")
+    })
+
+    test("no SQL arg returns null (interactive)", () => {
+      const args = ["sqlite3", "db.sqlite"]
+      expect(extractSqlFromArgs("sqlite3", args)).toBeNull()
+    })
+
+    test("no args at all returns null", () => {
+      const args = ["sqlite3"]
+      expect(extractSqlFromArgs("sqlite3", args)).toBeNull()
+    })
+  })
+})
+
+describe("extractSqlFromPsql (deprecated, backward compat)", () => {
   test("double-quoted -c", () => {
     const cmd = `psql postgres://user:pass@localhost:5433/db -t -c "SELECT * FROM users" 2>&1`
     expect(extractSqlFromPsql(cmd)).toBe("SELECT * FROM users")
@@ -12,21 +90,9 @@ describe("extractSqlFromPsql", () => {
     expect(extractSqlFromPsql(cmd)).toBe("SELECT count(*) FROM orders")
   })
 
-  test("--command= form", () => {
-    const cmd = `psql --command="EXPLAIN SELECT 1"`
-    expect(extractSqlFromPsql(cmd)).toBe("EXPLAIN SELECT 1")
-  })
-
   test("no -c flag returns null", () => {
     const cmd = `psql postgres://localhost:5433/db`
     expect(extractSqlFromPsql(cmd)).toBeNull()
-  })
-
-  test("complex connection string", () => {
-    const cmd = `psql postgres://deepcurrent:deepcurrent@localhost:5433/deepcurrent -t -c "SELECT DISTINCT advertiser_id FROM search_index LIMIT 1" 2>&1`
-    expect(extractSqlFromPsql(cmd)).toBe(
-      "SELECT DISTINCT advertiser_id FROM search_index LIMIT 1"
-    )
   })
 })
 

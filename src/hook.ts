@@ -42,7 +42,7 @@ function prompt(reason: string): never {
 
 import { SAFE_COMMANDS, DB_CLIENTS, INSPECTED_COMMANDS } from "./safelist.ts"
 import { extractCommandInfos } from "./parser.ts"
-import { extractSqlFromPsql, isSqlReadOnly } from "./sql.ts"
+import { extractSqlFromArgs, isSqlReadOnly } from "./sql.ts"
 import { isGitCommandSafe } from "./git.ts"
 import { loadConfig } from "./config.ts"
 import { createDebug } from "./debug.ts"
@@ -168,8 +168,8 @@ for (const cmdInfo of commandInfos) {
   // Commands that get deeper argument inspection
   if (INSPECTED_COMMANDS.has(name)) {
     if (name === "git") {
-      const safe = isGitCommandSafe(args.join(" "), protectedBranches)
-      debug("git", { args: args.join(" "), safe })
+      const safe = isGitCommandSafe(args, protectedBranches)
+      debug("git", { args, safe })
       if (safe) continue
     }
     audit.log({ tool: "Bash", input: command, decision: "prompt", reason: `inspected command: ${name}`, layer: "git" })
@@ -178,7 +178,7 @@ for (const cmdInfo of commandInfos) {
 
   // DB clients get SQL-level inspection
   if (dbClients.has(name)) {
-    const sql = extractSqlFromPsql(command)
+    const sql = extractSqlFromArgs(name, args)
     const readOnly = sql ? isSqlReadOnly(sql) : false
     debug("sql", { name, sql, readOnly })
     if (sql && readOnly) continue

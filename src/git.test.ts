@@ -132,4 +132,30 @@ describe("isGitCommandSafe", () => {
   test("bare git — safe (shows help)", () => {
     expect(isGitCommandSafe("git")).toBe(true)
   })
+
+  describe("accepts pre-parsed args array (from shfmt)", () => {
+    test("safe: parsed git status", () => {
+      expect(isGitCommandSafe(["git", "status"])).toBe(true)
+    })
+
+    test("safe: parsed git push to feature branch", () => {
+      expect(isGitCommandSafe(["git", "push", "-u", "origin", "feat/search"])).toBe(true)
+    })
+
+    test("unsafe: parsed git push --force", () => {
+      expect(isGitCommandSafe(["git", "push", "--force"])).toBe(false)
+    })
+
+    test("unsafe: parsed git push to protected branch", () => {
+      expect(isGitCommandSafe(["git", "push", "origin", "main"])).toBe(false)
+    })
+
+    test("safe: parsed git commit with message", () => {
+      expect(isGitCommandSafe(["git", "commit", "-m", "feat: add feature"])).toBe(true)
+    })
+
+    test("unsafe: parsed git reset --hard", () => {
+      expect(isGitCommandSafe(["git", "reset", "--hard"])).toBe(false)
+    })
+  })
 })
