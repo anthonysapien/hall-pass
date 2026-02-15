@@ -104,11 +104,14 @@ function parseGitCommand(args: string[]): { subcommand: string; flags: string[];
 
 /**
  * Check if a git command is safe to auto-approve.
- * Takes the raw command string (everything after "git").
+ *
+ * Accepts either pre-parsed args (from shfmt AST) or a raw command string.
+ * Prefer passing parsed args to avoid redundant tokenization.
  */
-export function isGitCommandSafe(fullCommand: string, customProtectedBranches?: Set<string>): boolean {
-  // Tokenize roughly — split on whitespace, respecting quotes
-  const args = tokenize(fullCommand)
+export function isGitCommandSafe(argsOrCommand: string[] | string, customProtectedBranches?: Set<string>): boolean {
+  const args = typeof argsOrCommand === "string"
+    ? tokenize(argsOrCommand)
+    : [...argsOrCommand]
 
   // Remove "git" if it's the first token
   if (args[0] === "git") args.shift()
