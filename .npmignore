@@ -1,0 +1,4 @@
+*.test.ts
+bun.lock
+.gitignore
+.claude/

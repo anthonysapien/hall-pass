@@ -2,9 +2,21 @@ import { describe, test, expect } from "bun:test"
 
 const HOOK_PATH = new URL("./hook.ts", import.meta.url).pathname
 
-/** Run the hook with a simulated Claude Code input and return the exit code */
+/** Run the hook with a simulated Claude Code Bash input and return the exit code */
 async function runHook(command: string): Promise<number> {
-  const input = JSON.stringify({ tool_input: { command } })
+  const input = JSON.stringify({ tool_name: "Bash", tool_input: { command } })
+  const proc = Bun.spawn(["bun", HOOK_PATH], {
+    stdin: new Response(input),
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  await proc.exited
+  return proc.exitCode ?? 1
+}
+
+/** Run the hook with a Write/Edit tool input and return the exit code */
+async function runHookForTool(toolName: string, toolInput: Record<string, unknown>): Promise<number> {
+  const input = JSON.stringify({ tool_name: toolName, tool_input: toolInput })
   const proc = Bun.spawn(["bun", HOOK_PATH], {
     stdin: new Response(input),
     stdout: "pipe",
@@ -148,5 +160,27 @@ describe("hook integration", () => {
     })
     await proc.exited
     expect(proc.exitCode).toBe(1)
+  })
+})
+
+describe("Write/Edit tool integration", () => {
+  describe("Write tool", () => {
+    test("safe path → exit 0", async () => {
+      expect(await runHookForTool("Write", { file_path: "/tmp/safe-file.ts" })).toBe(0)
+    })
+
+    test("no file_path → exit 0", async () => {
+      expect(await runHookForTool("Write", {})).toBe(0)
+    })
+  })
+
+  describe("Edit tool", () => {
+    test("safe path → exit 0", async () => {
+      expect(await runHookForTool("Edit", { file_path: "/tmp/safe-file.ts" })).toBe(0)
+    })
+
+    test("no file_path → exit 0", async () => {
+      expect(await runHookForTool("Edit", {})).toBe(0)
+    })
   })
 })

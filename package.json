@@ -1,20 +1,48 @@
 {
   "name": "hall-pass",
-  "version": "0.1.0",
-  "description": "PreToolUse hook for Claude Code that auto-approves safe Bash commands using shfmt AST parsing",
+  "version": "0.2.0",
+  "description": "PreToolUse hook for Claude Code — auto-approves safe commands, blocks dangerous ones, protects sensitive files",
   "module": "src/hook.ts",
   "type": "module",
-  "private": true,
+  "private": false,
+  "bin": {
+    "hall-pass-install": "./src/install.ts",
+    "hall-pass-uninstall": "./src/uninstall.ts",
+    "hall-pass-init": "./src/cli.ts"
+  },
+  "files": [
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "install-hook": "bun src/install.ts",
     "uninstall-hook": "bun src/uninstall.ts",
     "test": "bun test",
     "typecheck": "bun build src/hook.ts --no-bundle --no-emit"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anthonyyam/hall-pass.git"
+  },
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "hooks",
+    "safety",
+    "pretooluse",
+    "guardrails",
+    "ai-safety",
+    "command-approval"
+  ],
+  "engines": {
+    "bun": ">=1.0.0"
+  },
   "devDependencies": {
     "@types/bun": "latest"
   },
   "dependencies": {
-    "pgsql-ast-parser": "^12.0.2"
+    "pgsql-ast-parser": "^12.0.2",
+    "smol-toml": "^1.6.0"
   }
 }

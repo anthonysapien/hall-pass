@@ -106,7 +106,7 @@ function parseGitCommand(args: string[]): { subcommand: string; flags: string[];
  * Check if a git command is safe to auto-approve.
  * Takes the raw command string (everything after "git").
  */
-export function isGitCommandSafe(fullCommand: string): boolean {
+export function isGitCommandSafe(fullCommand: string, customProtectedBranches?: Set<string>): boolean {
   // Tokenize roughly — split on whitespace, respecting quotes
   const args = tokenize(fullCommand)
 
@@ -134,11 +134,12 @@ export function isGitCommandSafe(fullCommand: string): boolean {
 
   // Branch-gated commands: check which branch
   if (BRANCH_GATED_SUBCOMMANDS.has(subcommand)) {
+    const branches = customProtectedBranches ?? PROTECTED_BRANCHES
     // Check if pushing to a protected branch
     // git push origin main, git push origin HEAD:main
     for (const arg of rest) {
       const target = arg.includes(":") ? arg.split(":").pop()! : arg
-      if (PROTECTED_BRANCHES.has(target)) return false
+      if (branches.has(target)) return false
     }
     // git push with no branch specified — check for force flags only
     // (already checked above), otherwise allow
