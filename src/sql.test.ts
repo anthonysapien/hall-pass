@@ -136,6 +136,49 @@ describe("isSqlReadOnly", () => {
     }
   })
 
+  describe("psql meta-commands (should return true)", () => {
+    const safe = [
+      "\\dt",
+      "\\dt+",
+      "\\dt api_keys",
+      "\\dt+ api_keys",
+      "\\d users",
+      "\\d+ users",
+      "\\di",
+      "\\ds",
+      "\\dv",
+      "\\l",
+      "\\dn",
+      "\\df",
+      "\\du",
+      "\\conninfo",
+      "\\encoding",
+      "\\x",
+      "\\pset format csv",
+    ]
+
+    for (const sql of safe) {
+      test(sql, () => {
+        expect(isSqlReadOnly(sql)).toBe(true)
+      })
+    }
+  })
+
+  describe("dangerous psql meta-commands (should return false)", () => {
+    const dangerous = [
+      "\\! rm -rf /",
+      "\\copy users TO '/tmp/dump.csv'",
+      "\\i /tmp/evil.sql",
+      "\\o /tmp/output.txt",
+    ]
+
+    for (const sql of dangerous) {
+      test(sql, () => {
+        expect(isSqlReadOnly(sql)).toBe(false)
+      })
+    }
+  })
+
   test("unparseable SQL returns false", () => {
     expect(isSqlReadOnly("NOT VALID SQL !@#$")).toBe(false)
   })

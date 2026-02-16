@@ -11,6 +11,7 @@
  */
 
 import { parse } from "pgsql-ast-parser"
+import { isPsqlMetaCommandSafe } from "./psql.ts"
 
 const READ_ONLY_TYPES = new Set([
   "select",
@@ -108,6 +109,11 @@ export function extractSqlFromPsql(command: string): string | null {
 export function isSqlReadOnly(sql: string): boolean {
   const trimmed = sql.trim()
   if (!trimmed) return true
+
+  // psql meta-commands start with backslash — not parseable as SQL
+  if (trimmed.startsWith("\\")) {
+    return isPsqlMetaCommandSafe(trimmed)
+  }
 
   try {
     const statements = parse(trimmed)
