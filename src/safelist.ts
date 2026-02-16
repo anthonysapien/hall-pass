@@ -14,7 +14,7 @@ export const SAFE_COMMANDS = new Set([
   "bun", "npm", "npx",
 
   // Process management
-  "lsof", "sleep",
+  "lsof", "sleep", "pkill", "killall",
 
   // Network
   "curl", "wget",
@@ -64,8 +64,6 @@ export const DANGEROUS_COMMANDS = new Set([
   "dd", "mkfs", "fdisk", "parted", "mount", "umount",
   // System control
   "shutdown", "reboot", "halt", "poweroff", "init",
-  // Process control (broad)
-  "killall", "pkill",
   // Dangerous network
   "nc", "ncat",
 ])
