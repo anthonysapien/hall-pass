@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test"
-import { evaluateCommand, createEvalContext, type EvalContext } from "./evaluate.ts"
+import { evaluateBashCommand, createEvalContext, type EvalContext } from "./evaluate.ts"
 import type { CommandInfo } from "./parser.ts"
 import type { HallPassConfig } from "./config.ts"
 
@@ -21,16 +21,16 @@ function makeCtx(pipelineCommands: CommandInfo[] = []): EvalContext {
 }
 
 function expectAllow(cmdInfo: CommandInfo, ctx?: EvalContext) {
-  const result = evaluateCommand(cmdInfo, ctx ?? makeCtx())
+  const result = evaluateBashCommand(cmdInfo, ctx ?? makeCtx())
   expect(result.decision).toBe("allow")
 }
 
 function expectPrompt(cmdInfo: CommandInfo, ctx?: EvalContext) {
-  const result = evaluateCommand(cmdInfo, ctx ?? makeCtx())
+  const result = evaluateBashCommand(cmdInfo, ctx ?? makeCtx())
   expect(result.decision).toBe("prompt")
 }
 
-describe("evaluateCommand", () => {
+describe("evaluateBashCommand", () => {
   describe("xargs", () => {
     test("xargs echo → allow", () => {
       expectAllow(cmd("xargs", "echo"))
@@ -279,7 +279,7 @@ describe("evaluateCommand", () => {
     expectPrompt(cmd("unknown-tool", "--flag"))
   })
 
-  describe("DB clients via evaluateCommand", () => {
+  describe("DB clients via evaluateBashCommand", () => {
     test("psql with read-only SQL → allow", () => {
       expectAllow(cmd("psql", "-c", "SELECT * FROM users"))
     })
@@ -305,7 +305,7 @@ describe("evaluateCommand", () => {
     })
   })
 
-  describe("git via evaluateCommand", () => {
+  describe("git via evaluateBashCommand", () => {
     test("git status → allow", () => {
       expectAllow(cmd("git", "status"))
     })
@@ -332,13 +332,13 @@ describe("evaluateCommand", () => {
   describe("recursive evaluation", () => {
     test("find -exec python3 -c with JSON → feedback (recursive)", () => {
       const c = cmd("find", ".", "-exec", "python3", "-c", "json.loads(data)", "{}", ";")
-      const result = evaluateCommand(c, makeCtx())
+      const result = evaluateBashCommand(c, makeCtx())
       expect(result.decision).toBe("feedback")
     })
 
     test("xargs with python3 -c with string ops → feedback (recursive)", () => {
       const c = cmd("xargs", "python3", "-c", "print('a,b,c'.split(',')[0])")
-      const result = evaluateCommand(c, makeCtx())
+      const result = evaluateBashCommand(c, makeCtx())
       expect(result.decision).toBe("feedback")
     })
   })

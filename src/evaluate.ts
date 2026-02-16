@@ -2,7 +2,7 @@
  * Unified recursive command evaluation.
  *
  * Every command — top-level and recursive (find -exec, xargs) — flows
- * through `evaluateCommand`. This replaces the scattered checks in
+ * through `evaluateBashCommand`. This replaces the scattered checks in
  * hook.ts with a single pipeline:
  *
  *   1. unwrapCommand()                     — nohup, nice, timeout
@@ -57,7 +57,7 @@ export function createEvalContext(
     dbClients,
     protectedBranches,
     pipelineCommands,
-    evaluate: (cmd) => evaluateCommand(cmd, ctx),
+    evaluate: (cmd) => evaluateBashCommand(cmd, ctx),
   }
 
   return ctx
@@ -67,7 +67,7 @@ export function createEvalContext(
  * Evaluate a single command through the full pipeline.
  * Called for top-level commands and recursively for sub-commands.
  */
-export function evaluateCommand(rawCmdInfo: CommandInfo, ctx: EvalContext): EvalResult {
+export function evaluateBashCommand(rawCmdInfo: CommandInfo, ctx: EvalContext): EvalResult {
   // 1. Unwrap transparent wrappers (nohup, nice, timeout)
   const cmdInfo = unwrapCommand(rawCmdInfo)
   const { name } = cmdInfo

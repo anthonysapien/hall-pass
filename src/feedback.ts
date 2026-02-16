@@ -138,7 +138,7 @@ export function checkFeedbackRules(commandInfos: CommandInfo[]): string | null {
 }
 
 /**
- * Per-command feedback check — called from evaluateCommand for each command
+ * Per-command feedback check — called from evaluateBashCommand for each command
  * including recursive sub-commands from find -exec and xargs.
  *
  * For top-level commands, pipelineContext is the full pipeline.
