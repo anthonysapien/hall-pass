@@ -47,9 +47,12 @@ function expectAllow(result: HookResult) {
   expect(parsed.hookSpecificOutput.permissionDecision).toBe("allow")
 }
 
-/** Check that the hook prompted (exit 1, no allow JSON) */
+/** Check that the hook prompted (exit 0 + ask JSON, no additionalContext) */
 function expectPrompt(result: HookResult) {
-  expect(result.exitCode).toBe(1)
+  expect(result.exitCode).toBe(0)
+  const parsed = JSON.parse(result.stdout)
+  expect(parsed.hookSpecificOutput.permissionDecision).toBe("ask")
+  expect(parsed.hookSpecificOutput.additionalContext).toBeUndefined()
 }
 
 /** Check that the hook returned ask + feedback suggestion (exit 0 + ask JSON with additionalContext) */

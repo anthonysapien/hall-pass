@@ -4,13 +4,13 @@
  * hall-pass: PreToolUse hook for Claude Code
  *
  * Routes by tool type:
- *   - Bash: unified recursive evaluation via evaluateCommand
+ *   - Bash: unified recursive evaluation via evaluateBashCommand
  *   - Write/Edit: file path protection
  *
- * Decision protocol:
- *   Exit 0 + JSON { permissionDecision: "allow" }  = auto-approve (skip prompt)
- *   Exit 0 + JSON { permissionDecision: "ask" }    = prompt user + nudge Claude via additionalContext
- *   Exit 1 = no opinion (fall through to normal permission prompt)
+ * Decision protocol (all exit 0 + JSON on stdout):
+ *   { permissionDecision: "allow" }                = auto-approve (skip prompt)
+ *   { permissionDecision: "ask" }                  = prompt user for permission
+ *   { permissionDecision: "ask", additionalContext } = prompt user + nudge Claude
  */
 
 // Diagnostic log — always writes to /tmp so we can debug hook failures
@@ -47,10 +47,17 @@ function feedback(suggestion: string): never {
   process.exit(0)
 }
 
-/** Exit with no opinion — falls through to normal permission prompt. */
+/** Prompt the user for permission (no additional context for Claude). */
 function prompt(reason: string): never {
   diag(`PROMPT ${reason}`)
-  process.exit(1)
+  const output = JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "ask",
+    },
+  })
+  process.stdout.write(output)
+  process.exit(0)
 }
 
 import { extractCommandInfos, extractRedirects } from "./parser.ts"
