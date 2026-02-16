@@ -125,11 +125,48 @@ export const FEEDBACK_RULES: FeedbackRule[] = [
 /**
  * Run all feedback rules against the parsed command list.
  * Returns the first matching suggestion, or null if no rules match.
+ *
+ * Used in hook.ts for pipeline-level cross-command patterns
+ * (e.g., curl in one command + python3 -c in another).
  */
 export function checkFeedbackRules(commandInfos: CommandInfo[]): string | null {
   for (const rule of FEEDBACK_RULES) {
     const suggestion = rule(commandInfos)
     if (suggestion) return suggestion
   }
+  return null
+}
+
+/**
+ * Per-command feedback check — called from evaluateCommand for each command
+ * including recursive sub-commands from find -exec and xargs.
+ *
+ * For top-level commands, pipelineContext is the full pipeline.
+ * For sub-commands, pipelineContext provides the pipeline context for
+ * cross-command pattern matching (e.g., detecting curl upstream).
+ */
+export function checkCommandFeedback(
+  cmdInfo: CommandInfo,
+  pipelineContext: CommandInfo[],
+): string | null {
+  const code = getInlineCode(cmdInfo)
+  if (!code) return null
+
+  // JSON parsing check
+  const hasJsonKeyword = JSON_KEYWORDS.some(kw => code.includes(kw))
+  if (hasJsonKeyword) {
+    const hasFetcher = pipelineContext.some(c => c.name === "curl" || c.name === "wget")
+    if (hasFetcher) {
+      return `hall-pass: Use \`jq\` for JSON parsing — it's purpose-built, safer, and auto-approved by hall-pass. Example: curl ... | jq '.field'`
+    }
+    return `hall-pass: Use \`jq\` for JSON parsing instead of inline ${cmdInfo.name} — it's purpose-built, safer, and auto-approved by hall-pass.`
+  }
+
+  // String operations check
+  const hasStringOp = STRING_OP_KEYWORDS.some(kw => code.includes(kw))
+  if (hasStringOp) {
+    return `hall-pass: Use shell builtins (sed, awk, tr, cut) instead of inline ${cmdInfo.name} scripting — they're auto-approved by hall-pass.`
+  }
+
   return null
 }

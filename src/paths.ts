@@ -24,6 +24,29 @@ const READ_COMMANDS = new Set([
 /** Commands that delete files. */
 const DELETE_COMMANDS = new Set(["rm", "rmdir", "unlink"])
 
+/**
+ * Commands whose positional arguments are file paths.
+ * Only these commands get path protection checking.
+ *
+ * docker, git, curl, npm etc. are NOT here — their args aren't file paths.
+ * This prevents false positives like `docker compose --env-file .env.local`.
+ */
+const PATH_AWARE_COMMANDS = new Set([
+  // Read
+  "cat", "head", "tail", "less", "more", "file", "stat", "wc", "strings",
+  "diff", "md5sum", "sha256sum", "sha1sum", "xxd", "od",
+  // Write
+  "cp", "mv", "mkdir", "touch", "tee", "ln", "install",
+  // Delete
+  "rm", "rmdir", "unlink",
+  // Permissions
+  "chmod", "chown", "chgrp",
+])
+
+export function isPathAwareCommand(name: string): boolean {
+  return PATH_AWARE_COMMANDS.has(name)
+}
+
 /** Check if a string looks like a file path. */
 function looksLikePath(arg: string): boolean {
   return arg.includes("/") || arg.startsWith(".") || arg.startsWith("~")

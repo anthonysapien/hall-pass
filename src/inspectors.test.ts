@@ -1,257 +1,345 @@
 import { describe, test, expect } from "bun:test"
-import { isCommandSafe } from "./inspectors.ts"
+import { evaluateCommand, createEvalContext, type EvalContext } from "./evaluate.ts"
 import type { CommandInfo } from "./parser.ts"
+import type { HallPassConfig } from "./config.ts"
 
 function cmd(name: string, ...rest: string[]): CommandInfo {
   return { name, args: [name, ...rest], assigns: [] }
 }
 
-describe("isCommandSafe", () => {
+/** Minimal config for unit tests — no path protection, no custom commands. */
+const TEST_CONFIG: HallPassConfig = {
+  commands: { safe: [], db_clients: [] },
+  git: { protected_branches: [] },
+  paths: { protected: [], read_only: [], no_delete: [] },
+  audit: { enabled: false, path: "" },
+  debug: { enabled: false },
+}
+
+function makeCtx(pipelineCommands: CommandInfo[] = []): EvalContext {
+  return createEvalContext(TEST_CONFIG, pipelineCommands)
+}
+
+function expectAllow(cmdInfo: CommandInfo, ctx?: EvalContext) {
+  const result = evaluateCommand(cmdInfo, ctx ?? makeCtx())
+  expect(result.decision).toBe("allow")
+}
+
+function expectPrompt(cmdInfo: CommandInfo, ctx?: EvalContext) {
+  const result = evaluateCommand(cmdInfo, ctx ?? makeCtx())
+  expect(result.decision).toBe("prompt")
+}
+
+describe("evaluateCommand", () => {
   describe("xargs", () => {
-    test("xargs echo → safe", () => {
-      expect(isCommandSafe(cmd("xargs", "echo"))).toBe(true)
+    test("xargs echo → allow", () => {
+      expectAllow(cmd("xargs", "echo"))
     })
 
-    test("xargs grep → safe", () => {
-      expect(isCommandSafe(cmd("xargs", "grep", "-l", "foo"))).toBe(true)
+    test("xargs grep → allow", () => {
+      expectAllow(cmd("xargs", "grep", "-l", "foo"))
     })
 
-    test("xargs kill → safe (kill inspector sees no dangerous PIDs)", () => {
-      expect(isCommandSafe(cmd("xargs", "kill"))).toBe(true)
+    test("xargs kill → allow (kill inspector sees no dangerous PIDs)", () => {
+      expectAllow(cmd("xargs", "kill"))
     })
 
-    test("xargs rm → unsafe", () => {
-      expect(isCommandSafe(cmd("xargs", "rm"))).toBe(false)
+    test("xargs rm → prompt", () => {
+      expectPrompt(cmd("xargs", "rm"))
     })
 
-    test("xargs rm -rf → unsafe", () => {
-      expect(isCommandSafe(cmd("xargs", "-I{}", "rm", "-rf", "{}"))).toBe(false)
+    test("xargs rm -rf → prompt", () => {
+      expectPrompt(cmd("xargs", "-I{}", "rm", "-rf", "{}"))
     })
 
-    test("xargs with -I flag then safe cmd → safe", () => {
-      expect(isCommandSafe(cmd("xargs", "-I{}", "echo", "{}"))).toBe(true)
+    test("xargs with -I flag then safe cmd → allow", () => {
+      expectAllow(cmd("xargs", "-I{}", "echo", "{}"))
     })
 
-    test("bare xargs (defaults to echo) → safe", () => {
-      expect(isCommandSafe(cmd("xargs"))).toBe(true)
+    test("bare xargs (defaults to echo) → allow", () => {
+      expectAllow(cmd("xargs"))
     })
   })
 
   describe("source", () => {
-    test("always unsafe", () => {
-      expect(isCommandSafe(cmd("source", "./evil.sh"))).toBe(false)
+    test("always prompts", () => {
+      expectPrompt(cmd("source", "./evil.sh"))
     })
   })
 
   describe("find", () => {
-    test("find . -name '*.ts' → safe", () => {
-      expect(isCommandSafe(cmd("find", ".", "-name", "*.ts"))).toBe(true)
+    test("find . -name '*.ts' → allow", () => {
+      expectAllow(cmd("find", ".", "-name", "*.ts"))
     })
 
-    test("find . -type f → safe", () => {
-      expect(isCommandSafe(cmd("find", ".", "-type", "f"))).toBe(true)
+    test("find . -type f → allow", () => {
+      expectAllow(cmd("find", ".", "-type", "f"))
     })
 
-    test("find . -exec grep -l 'pattern' {} \\; → safe (grep is safelisted)", () => {
-      expect(isCommandSafe(cmd("find", ".", "-exec", "grep", "-l", "pattern", "{}", ";"))).toBe(true)
+    test("find . -exec grep -l 'pattern' {} \\; → allow (grep is safelisted)", () => {
+      expectAllow(cmd("find", ".", "-exec", "grep", "-l", "pattern", "{}", ";"))
     })
 
-    test("find . -exec cat {} + → safe (cat is safelisted)", () => {
-      expect(isCommandSafe(cmd("find", ".", "-exec", "cat", "{}", "+"))).toBe(true)
+    test("find . -exec cat {} + → allow (cat is safelisted)", () => {
+      expectAllow(cmd("find", ".", "-exec", "cat", "{}", "+"))
     })
 
-    test("find . -exec rm {} \\; → unsafe (rm not safelisted)", () => {
-      expect(isCommandSafe(cmd("find", ".", "-exec", "rm", "{}", ";"))).toBe(false)
+    test("find . -exec rm {} \\; → prompt (rm not safelisted)", () => {
+      expectPrompt(cmd("find", ".", "-exec", "rm", "{}", ";"))
     })
 
-    test("find . -exec sed -i 's/a/b/' {} \\; → unsafe (sed inspector catches -i)", () => {
-      expect(isCommandSafe(cmd("find", ".", "-exec", "sed", "-i", "s/a/b/", "{}", ";"))).toBe(false)
+    test("find . -exec sed -i 's/a/b/' {} \\; → prompt (sed inspector catches -i)", () => {
+      expectPrompt(cmd("find", ".", "-exec", "sed", "-i", "s/a/b/", "{}", ";"))
     })
 
-    test("find . -exec sed 's/a/b/' {} \\; → safe (sed without -i is safe)", () => {
-      expect(isCommandSafe(cmd("find", ".", "-exec", "sed", "s/a/b/", "{}", ";"))).toBe(true)
+    test("find . -exec sed 's/a/b/' {} \\; → allow (sed without -i is safe)", () => {
+      expectAllow(cmd("find", ".", "-exec", "sed", "s/a/b/", "{}", ";"))
     })
 
-    test("find . -execdir rm {} \\; → unsafe (rm not safelisted)", () => {
-      expect(isCommandSafe(cmd("find", ".", "-execdir", "rm", "{}", ";"))).toBe(false)
+    test("find . -execdir rm {} \\; → prompt (rm not safelisted)", () => {
+      expectPrompt(cmd("find", ".", "-execdir", "rm", "{}", ";"))
     })
 
-    test("find . -execdir cat {} \\; → safe (cat is safelisted)", () => {
-      expect(isCommandSafe(cmd("find", ".", "-execdir", "cat", "{}", ";"))).toBe(true)
+    test("find . -execdir cat {} \\; → allow (cat is safelisted)", () => {
+      expectAllow(cmd("find", ".", "-execdir", "cat", "{}", ";"))
     })
 
-    test("find . -delete → unsafe", () => {
-      expect(isCommandSafe(cmd("find", ".", "-delete"))).toBe(false)
+    test("find . -delete → prompt", () => {
+      expectPrompt(cmd("find", ".", "-delete"))
     })
 
-    test("find . -ok rm {} \\; → unsafe", () => {
-      expect(isCommandSafe(cmd("find", ".", "-ok", "rm", "{}", ";"))).toBe(false)
+    test("find . -ok rm {} \\; → prompt", () => {
+      expectPrompt(cmd("find", ".", "-ok", "rm", "{}", ";"))
     })
 
-    test("find . -exec grep -l 'foo' {} \\; -exec wc -l {} \\; → safe (both safelisted)", () => {
-      expect(isCommandSafe(cmd("find", ".", "-exec", "grep", "-l", "foo", "{}", ";", "-exec", "wc", "-l", "{}", ";"))).toBe(true)
+    test("find . -exec grep -l 'foo' {} \\; -exec wc -l {} \\; → allow (both safelisted)", () => {
+      expectAllow(cmd("find", ".", "-exec", "grep", "-l", "foo", "{}", ";", "-exec", "wc", "-l", "{}", ";"))
     })
 
-    test("find . -exec grep 'foo' {} \\; -exec rm {} \\; → unsafe (rm not safe)", () => {
-      expect(isCommandSafe(cmd("find", ".", "-exec", "grep", "foo", "{}", ";", "-exec", "rm", "{}", ";"))).toBe(false)
+    test("find . -exec grep 'foo' {} \\; -exec rm {} \\; → prompt (rm not safe)", () => {
+      expectPrompt(cmd("find", ".", "-exec", "grep", "foo", "{}", ";", "-exec", "rm", "{}", ";"))
     })
   })
 
   describe("sed", () => {
-    test("sed 's/foo/bar/' file → safe", () => {
-      expect(isCommandSafe(cmd("sed", "s/foo/bar/", "file.txt"))).toBe(true)
+    test("sed 's/foo/bar/' file → allow", () => {
+      expectAllow(cmd("sed", "s/foo/bar/", "file.txt"))
     })
 
-    test("sed -n '/pattern/p' file → safe", () => {
-      expect(isCommandSafe(cmd("sed", "-n", "/pattern/p", "file.txt"))).toBe(true)
+    test("sed -n '/pattern/p' file → allow", () => {
+      expectAllow(cmd("sed", "-n", "/pattern/p", "file.txt"))
     })
 
-    test("sed -i 's/foo/bar/' file → unsafe", () => {
-      expect(isCommandSafe(cmd("sed", "-i", "", "s/foo/bar/", "file.txt"))).toBe(false)
+    test("sed -i 's/foo/bar/' file → prompt", () => {
+      expectPrompt(cmd("sed", "-i", "", "s/foo/bar/", "file.txt"))
     })
 
-    test("sed -i.bak 's/foo/bar/' file → unsafe", () => {
-      expect(isCommandSafe(cmd("sed", "-i.bak", "s/foo/bar/", "file.txt"))).toBe(false)
+    test("sed -i.bak 's/foo/bar/' file → prompt", () => {
+      expectPrompt(cmd("sed", "-i.bak", "s/foo/bar/", "file.txt"))
     })
   })
 
   describe("awk", () => {
-    test("awk '{print $1}' → safe", () => {
-      expect(isCommandSafe(cmd("awk", "{print $1}", "file.txt"))).toBe(true)
+    test("awk '{print $1}' → allow", () => {
+      expectAllow(cmd("awk", "{print $1}", "file.txt"))
     })
 
-    test("awk with system() → unsafe", () => {
-      expect(isCommandSafe(cmd("awk", "BEGIN{system(\"rm -rf /\")}"))).toBe(false)
+    test("awk with system() → prompt", () => {
+      expectPrompt(cmd("awk", "BEGIN{system(\"rm -rf /\")}"))
     })
 
-    test("awk with system () (space) → unsafe", () => {
-      expect(isCommandSafe(cmd("awk", "{system (\"evil\")}"))).toBe(false)
+    test("awk with system () (space) → prompt", () => {
+      expectPrompt(cmd("awk", "{system (\"evil\")}"))
     })
   })
 
   describe("kill", () => {
-    test("kill 12345 → safe", () => {
-      expect(isCommandSafe(cmd("kill", "12345"))).toBe(true)
+    test("kill 12345 → allow", () => {
+      expectAllow(cmd("kill", "12345"))
     })
 
-    test("kill -9 12345 → safe", () => {
-      expect(isCommandSafe(cmd("kill", "-9", "12345"))).toBe(true)
+    test("kill -9 12345 → allow", () => {
+      expectAllow(cmd("kill", "-9", "12345"))
     })
 
-    test("kill -TERM 12345 → safe", () => {
-      expect(isCommandSafe(cmd("kill", "-TERM", "12345"))).toBe(true)
+    test("kill -TERM 12345 → allow", () => {
+      expectAllow(cmd("kill", "-TERM", "12345"))
     })
 
-    test("kill -9 1 → unsafe (init)", () => {
-      expect(isCommandSafe(cmd("kill", "-9", "1"))).toBe(false)
+    test("kill -9 1 → prompt (init)", () => {
+      expectPrompt(cmd("kill", "-9", "1"))
     })
 
-    test("kill -9 -1 → unsafe (all processes)", () => {
-      expect(isCommandSafe(cmd("kill", "-9", "-1"))).toBe(false)
+    test("kill -9 -1 → prompt (all processes)", () => {
+      expectPrompt(cmd("kill", "-9", "-1"))
     })
 
-    test("kill 1 → unsafe", () => {
-      expect(isCommandSafe(cmd("kill", "1"))).toBe(false)
+    test("kill 1 → prompt", () => {
+      expectPrompt(cmd("kill", "1"))
     })
   })
 
   describe("chmod", () => {
-    test("chmod 644 file → safe", () => {
-      expect(isCommandSafe(cmd("chmod", "644", "file.txt"))).toBe(true)
+    test("chmod 644 file → allow", () => {
+      expectAllow(cmd("chmod", "644", "file.txt"))
     })
 
-    test("chmod 755 file → safe", () => {
-      expect(isCommandSafe(cmd("chmod", "755", "script.sh"))).toBe(true)
+    test("chmod 755 file → allow", () => {
+      expectAllow(cmd("chmod", "755", "script.sh"))
     })
 
-    test("chmod u+x file → safe", () => {
-      expect(isCommandSafe(cmd("chmod", "u+x", "script.sh"))).toBe(true)
+    test("chmod u+x file → allow", () => {
+      expectAllow(cmd("chmod", "u+x", "script.sh"))
     })
 
-    test("chmod 777 file → unsafe", () => {
-      expect(isCommandSafe(cmd("chmod", "777", "file"))).toBe(false)
+    test("chmod 777 file → prompt", () => {
+      expectPrompt(cmd("chmod", "777", "file"))
     })
 
-    test("chmod u+s file → unsafe (setuid)", () => {
-      expect(isCommandSafe(cmd("chmod", "u+s", "binary"))).toBe(false)
+    test("chmod u+s file → prompt (setuid)", () => {
+      expectPrompt(cmd("chmod", "u+s", "binary"))
     })
 
-    test("chmod 4755 file → unsafe (setuid)", () => {
-      expect(isCommandSafe(cmd("chmod", "4755", "binary"))).toBe(false)
+    test("chmod 4755 file → prompt (setuid)", () => {
+      expectPrompt(cmd("chmod", "4755", "binary"))
     })
   })
 
   describe("docker", () => {
-    test("docker ps → safe", () => {
-      expect(isCommandSafe(cmd("docker", "ps"))).toBe(true)
+    test("docker ps → allow", () => {
+      expectAllow(cmd("docker", "ps"))
     })
 
-    test("docker logs container → safe", () => {
-      expect(isCommandSafe(cmd("docker", "logs", "my-container"))).toBe(true)
+    test("docker logs container → allow", () => {
+      expectAllow(cmd("docker", "logs", "my-container"))
     })
 
-    test("docker build -t app . → safe", () => {
-      expect(isCommandSafe(cmd("docker", "build", "-t", "myapp", "."))).toBe(true)
+    test("docker build -t app . → allow", () => {
+      expectAllow(cmd("docker", "build", "-t", "myapp", "."))
     })
 
-    test("docker run app → safe", () => {
-      expect(isCommandSafe(cmd("docker", "run", "myapp"))).toBe(true)
+    test("docker run app → allow", () => {
+      expectAllow(cmd("docker", "run", "myapp"))
     })
 
-    test("docker run --privileged → unsafe", () => {
-      expect(isCommandSafe(cmd("docker", "run", "--privileged", "ubuntu"))).toBe(false)
+    test("docker run --privileged → prompt", () => {
+      expectPrompt(cmd("docker", "run", "--privileged", "ubuntu"))
     })
 
-    test("docker run --pid=host → unsafe", () => {
-      expect(isCommandSafe(cmd("docker", "run", "--pid=host", "ubuntu"))).toBe(false)
+    test("docker run --pid=host → prompt", () => {
+      expectPrompt(cmd("docker", "run", "--pid=host", "ubuntu"))
     })
 
-    test("docker run -v /:/host → unsafe", () => {
-      expect(isCommandSafe(cmd("docker", "run", "-v", "/:/host", "ubuntu"))).toBe(false)
+    test("docker run -v /:/host → prompt", () => {
+      expectPrompt(cmd("docker", "run", "-v", "/:/host", "ubuntu"))
     })
 
-    test("docker stop container → safe", () => {
-      expect(isCommandSafe(cmd("docker", "stop", "my-container"))).toBe(true)
+    test("docker stop container → allow", () => {
+      expectAllow(cmd("docker", "stop", "my-container"))
     })
   })
 
   describe("node", () => {
-    test("node script.js → safe", () => {
-      expect(isCommandSafe(cmd("node", "script.js"))).toBe(true)
+    test("node script.js → allow", () => {
+      expectAllow(cmd("node", "script.js"))
     })
 
-    test("node -e 'code' → unsafe", () => {
-      expect(isCommandSafe(cmd("node", "-e", "process.exit(1)"))).toBe(false)
+    test("node -e 'code' → prompt", () => {
+      expectPrompt(cmd("node", "-e", "process.exit(1)"))
     })
 
-    test("node --eval 'code' → unsafe", () => {
-      expect(isCommandSafe(cmd("node", "--eval", "code"))).toBe(false)
+    test("node --eval 'code' → prompt", () => {
+      expectPrompt(cmd("node", "--eval", "code"))
     })
 
-    test("node -p 'expr' → unsafe", () => {
-      expect(isCommandSafe(cmd("node", "-p", "1+1"))).toBe(false)
+    test("node -p 'expr' → prompt", () => {
+      expectPrompt(cmd("node", "-p", "1+1"))
     })
   })
 
   describe("python/python3", () => {
-    test("python script.py → safe", () => {
-      expect(isCommandSafe(cmd("python", "script.py"))).toBe(true)
+    test("python script.py → allow", () => {
+      expectAllow(cmd("python", "script.py"))
     })
 
-    test("python -c 'code' → unsafe", () => {
-      expect(isCommandSafe(cmd("python", "-c", "import os; os.system('evil')"))).toBe(false)
+    test("python -c 'code' → prompt", () => {
+      expectPrompt(cmd("python", "-c", "import os; os.system('evil')"))
     })
 
-    test("python3 -c 'code' → unsafe", () => {
-      expect(isCommandSafe(cmd("python3", "-c", "code"))).toBe(false)
+    test("python3 -c 'code' → prompt", () => {
+      expectPrompt(cmd("python3", "-c", "code"))
     })
 
-    test("python3 manage.py runserver → safe", () => {
-      expect(isCommandSafe(cmd("python3", "manage.py", "runserver"))).toBe(true)
+    test("python3 manage.py runserver → allow", () => {
+      expectAllow(cmd("python3", "manage.py", "runserver"))
     })
   })
 
-  test("unknown command returns false", () => {
-    expect(isCommandSafe(cmd("unknown-tool", "--flag"))).toBe(false)
+  test("unknown command returns prompt", () => {
+    expectPrompt(cmd("unknown-tool", "--flag"))
+  })
+
+  describe("DB clients via evaluateCommand", () => {
+    test("psql with read-only SQL → allow", () => {
+      expectAllow(cmd("psql", "-c", "SELECT * FROM users"))
+    })
+
+    test("psql with write SQL → prompt", () => {
+      expectPrompt(cmd("psql", "-c", "DROP TABLE users"))
+    })
+
+    test("mysql with read-only SQL → allow", () => {
+      expectAllow(cmd("mysql", "-e", "SELECT * FROM users"))
+    })
+
+    test("mysql interactive session → prompt", () => {
+      expectPrompt(cmd("mysql", "-u", "root", "mydb"))
+    })
+
+    test("sqlite3 with read-only SQL → allow", () => {
+      expectAllow(cmd("sqlite3", "db.sqlite", "SELECT * FROM users"))
+    })
+
+    test("sqlite3 with write SQL → prompt", () => {
+      expectPrompt(cmd("sqlite3", "db.sqlite", "DROP TABLE users"))
+    })
+  })
+
+  describe("git via evaluateCommand", () => {
+    test("git status → allow", () => {
+      expectAllow(cmd("git", "status"))
+    })
+
+    test("git push --force → prompt", () => {
+      expectPrompt(cmd("git", "push", "--force"))
+    })
+
+    test("git push origin main → prompt (default protected branch)", () => {
+      expectPrompt(cmd("git", "push", "origin", "main"))
+    })
+
+    test("git with custom protected branches", () => {
+      const config: HallPassConfig = {
+        ...TEST_CONFIG,
+        git: { protected_branches: ["release"] },
+      }
+      const ctx = createEvalContext(config, [])
+      // "release" is protected, "main" falls back to defaults only when no config branches
+      expectPrompt(cmd("git", "push", "origin", "release"), ctx)
+    })
+  })
+
+  describe("recursive evaluation", () => {
+    test("find -exec python3 -c with JSON → block (recursive feedback)", () => {
+      const c = cmd("find", ".", "-exec", "python3", "-c", "json.loads(data)", "{}", ";")
+      const result = evaluateCommand(c, makeCtx())
+      expect(result.decision).toBe("block")
+    })
+
+    test("xargs with python3 -c with string ops → block (recursive feedback)", () => {
+      const c = cmd("xargs", "python3", "-c", "print('a,b,c'.split(',')[0])")
+      const result = evaluateCommand(c, makeCtx())
+      expect(result.decision).toBe("block")
+    })
   })
 })

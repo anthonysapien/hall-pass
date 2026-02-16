@@ -1,41 +1,33 @@
 /**
  * Argument inspectors for commands that need deeper safety checking.
  *
- * Each inspector takes a parsed CommandInfo and returns true if the
- * command is safe to auto-approve. Returns false to prompt.
+ * Each inspector takes a parsed CommandInfo and EvalContext, and returns
+ * an EvalResult. Inspectors may recurse via ctx.evaluate() for sub-commands
+ * (find -exec, xargs), giving sub-commands the full evaluation pipeline.
  */
 
 import type { CommandInfo } from "./parser.ts"
-import { SAFE_COMMANDS } from "./safelist.ts"
+import type { EvalResult, EvalContext } from "./evaluate.ts"
 import { isGitCommandSafe } from "./git.ts"
 
-/**
- * Check if a command is safe based on its name and arguments.
- * Walks the same decision tree as the main hook loop:
- *   1. SAFE_COMMANDS → auto-approve
- *   2. Inspectors → delegate (which may recurse for find -exec, xargs, etc.)
- *   3. Unknown → prompt
- */
-export function isCommandSafe(cmdInfo: CommandInfo): boolean {
-  const { name, args } = cmdInfo
-  if (SAFE_COMMANDS.has(name)) return true
-  const inspector = INSPECTORS[name]
-  if (inspector) return inspector(args)
-  return false
-}
+export type Inspector = (cmdInfo: CommandInfo, ctx: EvalContext) => EvalResult
 
-type Inspector = (args: string[]) => boolean
+const allow = (reason: string): EvalResult => ({ decision: "allow", reason })
+const prompt = (reason: string): EvalResult => ({ decision: "prompt", reason })
 
-const INSPECTORS: Record<string, Inspector> = {
+export const INSPECTORS: Record<string, Inspector> = {
   // -- Version control --
 
-  git: (args) => isGitCommandSafe(args),
+  git: (cmdInfo, ctx) => {
+    const safe = isGitCommandSafe(cmdInfo.args, ctx.protectedBranches)
+    return safe ? allow("git: safe") : prompt("git: unsafe")
+  },
 
   // -- Commands that proxy other commands --
 
-  xargs: (args) => {
+  xargs: (cmdInfo, ctx) => {
+    const args = cmdInfo.args
     // xargs [flags] command [initial-args...]
-    // Extract the sub-command and its visible args, evaluate recursively
     for (let i = 1; i < args.length; i++) {
       const arg = args[i]
       // Skip xargs flags and their values
@@ -47,27 +39,28 @@ const INSPECTORS: Record<string, Inspector> = {
       if (arg.startsWith("-")) continue
       // Everything from here is the sub-command + its args
       const subArgs = args.slice(i)
-      return isCommandSafe({ name: subArgs[0], args: subArgs, assigns: [] })
+      const subCmd: CommandInfo = { name: subArgs[0], args: subArgs, assigns: [] }
+      return ctx.evaluate(subCmd)
     }
     // No command specified — xargs defaults to echo, which is safe
-    return true
+    return allow("xargs: defaults to echo")
   },
 
-  source: (_args) => {
+  source: () => {
     // source/. executes arbitrary scripts — always prompt
-    return false
+    return prompt("source: executes arbitrary scripts")
   },
 
   // -- Commands with dangerous flag variants --
 
-  find: (args) => {
+  find: (cmdInfo, ctx) => {
+    const args = cmdInfo.args
     // find is safe UNLESS it uses -exec, -execdir, -delete, or -ok
-    // For -exec/-execdir, extract the sub-command and evaluate recursively
     for (let i = 0; i < args.length; i++) {
       const arg = args[i]
 
       // -delete and -ok always prompt (no sub-command to inspect)
-      if (arg === "-delete" || arg === "-ok") return false
+      if (arg === "-delete" || arg === "-ok") return prompt(`find: ${arg}`)
 
       if (arg === "-exec" || arg === "-execdir") {
         // Extract sub-command: everything from next arg up to ; or +
@@ -79,131 +72,123 @@ const INSPECTORS: Record<string, Inspector> = {
           }
           subArgs.push(args[j])
         }
-        if (subArgs.length === 0) return false
-        if (!isCommandSafe({ name: subArgs[0], args: subArgs, assigns: [] })) return false
+        if (subArgs.length === 0) return prompt("find: empty -exec")
+        const subCmd: CommandInfo = { name: subArgs[0], args: subArgs, assigns: [] }
+        const result = ctx.evaluate(subCmd)
+        if (result.decision !== "allow") return result
       }
     }
-    return true
+    return allow("find: safe")
   },
 
-  sed: (args) => {
+  sed: (cmdInfo) => {
     // sed is safe UNLESS it uses -i (in-place editing)
-    for (const arg of args) {
-      if (arg === "-i" || arg.startsWith("-i")) return false
+    for (const arg of cmdInfo.args) {
+      if (arg === "-i" || arg.startsWith("-i")) return prompt("sed: -i in-place")
     }
-    return true
+    return allow("sed: read-only")
   },
 
-  awk: (args) => {
+  awk: (cmdInfo) => {
     // awk is safe UNLESS the script contains system() or getline
-    for (const arg of args) {
+    for (const arg of cmdInfo.args) {
       if (arg.startsWith("-")) continue
-      // Check the awk program text for dangerous functions
-      if (arg.includes("system(") || arg.includes("system (")) return false
-      if (arg.includes("| getline") || arg.includes("|getline")) return false
+      if (arg.includes("system(") || arg.includes("system (")) return prompt("awk: system()")
+      if (arg.includes("| getline") || arg.includes("|getline")) return prompt("awk: getline")
     }
-    return true
+    return allow("awk: safe")
   },
 
-  kill: (args) => {
+  kill: (cmdInfo) => {
+    const args = cmdInfo.args
     // kill [-signal] pid...
-    // Dangerous targets: PID 1 (init) or -1 (all processes)
-    // First non-kill arg that matches -SIGNAL pattern is the signal, rest are PIDs
     let signalSeen = false
     for (let i = 1; i < args.length; i++) {
       const arg = args[i]
-      // -s SIGNAL (two-arg form)
       if (arg === "-s") { i++; signalSeen = true; continue }
-      // -l/--list = just listing signals, safe
       if (arg === "-l" || arg === "--list") continue
-      // First -NUM or -SIGNAME is the signal (only first one)
       if (!signalSeen && (/^-\d+$/.test(arg) || /^-[A-Z]+$/.test(arg))) {
         signalSeen = true
         continue
       }
-      // Everything else is a PID — check for dangerous ones
-      if (arg === "1" || arg === "-1") return false
+      if (arg === "1" || arg === "-1") return prompt("kill: dangerous PID")
     }
-    return true
+    return allow("kill: safe")
   },
 
-  chmod: (args) => {
-    // chmod is safe for normal mode changes, dangerous for setuid/setgid or world-writable
+  chmod: (cmdInfo) => {
+    const args = cmdInfo.args
     for (let i = 1; i < args.length; i++) {
       const arg = args[i]
       if (arg.startsWith("-")) continue
-      // Numeric modes: check for setuid (4xxx), setgid (2xxx), sticky (1xxx), world-writable (xx7, xx6, xx2)
       if (/^\d{3,4}$/.test(arg)) {
         const mode = arg.length === 4 ? arg : "0" + arg
         const special = parseInt(mode[0])
         const other = parseInt(mode[3])
-        if (special > 0) return false      // setuid/setgid/sticky
-        if (other >= 6) return false        // world-writable
+        if (special > 0) return prompt("chmod: setuid/setgid/sticky")
+        if (other >= 6) return prompt("chmod: world-writable")
       }
-      // Symbolic: u+s, g+s, o+w, a+w
-      if (/[+]s/.test(arg)) return false    // setuid/setgid
-      if (/[oa][+]w/.test(arg)) return false // world-writable
-      if (arg === "777" || arg === "666") return false
+      if (/[+]s/.test(arg)) return prompt("chmod: setuid/setgid")
+      if (/[oa][+]w/.test(arg)) return prompt("chmod: world-writable")
+      if (arg === "777" || arg === "666") return prompt("chmod: unsafe mode")
     }
-    return true
+    return allow("chmod: safe")
   },
 
-  docker: (args) => {
-    // docker is safe for inspection commands, dangerous for run/exec with risky flags
-    if (args.length < 2) return true
+  docker: (cmdInfo) => {
+    const args = cmdInfo.args
+    if (args.length < 2) return allow("docker: no subcommand")
     const subcmd = args[1]
 
-    // Safe docker subcommands (read-only / inspection)
     const safeSubcmds = new Set([
       "ps", "images", "logs", "inspect", "stats", "top",
       "version", "info", "network", "volume", "system",
       "build", "pull", "tag", "login", "logout",
       "compose", "container", "image",
     ])
-    if (safeSubcmds.has(subcmd)) return true
+    if (safeSubcmds.has(subcmd)) return allow(`docker: ${subcmd}`)
 
-    // docker run/exec — check for dangerous flags
     if (subcmd === "run" || subcmd === "exec") {
       for (const arg of args) {
-        if (arg === "--privileged") return false
-        if (arg === "--pid=host" || arg === "--net=host" || arg === "--network=host") return false
-        // -v /:/host mounts root filesystem
+        if (arg === "--privileged") return prompt("docker: --privileged")
+        if (arg === "--pid=host" || arg === "--net=host" || arg === "--network=host") {
+          return prompt("docker: host namespace")
+        }
         if (arg.startsWith("-v") || arg.startsWith("--volume")) {
           const vol = arg.includes("=") ? arg.split("=")[1] : args[args.indexOf(arg) + 1]
-          if (vol && vol.startsWith("/:/")) return false
+          if (vol && vol.startsWith("/:/")) return prompt("docker: root volume mount")
         }
       }
-      return true
+      return allow(`docker: ${subcmd}`)
     }
 
-    // docker stop/rm/rmi — fine
-    if (subcmd === "stop" || subcmd === "rm" || subcmd === "rmi" || subcmd === "restart") return true
+    if (subcmd === "stop" || subcmd === "rm" || subcmd === "rmi" || subcmd === "restart") {
+      return allow(`docker: ${subcmd}`)
+    }
 
-    return false
+    return prompt(`docker: unknown subcommand ${subcmd}`)
   },
 
-  node: (args) => {
-    // node is safe as a script runner, dangerous with -e/--eval/-p/--print (inline code)
-    for (const arg of args) {
-      if (arg === "-e" || arg === "--eval" || arg === "-p" || arg === "--print") return false
+  node: (cmdInfo) => {
+    for (const arg of cmdInfo.args) {
+      if (arg === "-e" || arg === "--eval" || arg === "-p" || arg === "--print") {
+        return prompt("node: inline code")
+      }
     }
-    return true
+    return allow("node: script runner")
   },
 
-  python: (args) => {
-    // python is safe as a script runner, dangerous with -c (inline code)
-    for (const arg of args) {
-      if (arg === "-c") return false
+  python: (cmdInfo) => {
+    for (const arg of cmdInfo.args) {
+      if (arg === "-c") return prompt("python: inline code")
     }
-    return true
+    return allow("python: script runner")
   },
 
-  python3: (args) => {
-    // Same as python
-    for (const arg of args) {
-      if (arg === "-c") return false
+  python3: (cmdInfo) => {
+    for (const arg of cmdInfo.args) {
+      if (arg === "-c") return prompt("python3: inline code")
     }
-    return true
+    return allow("python3: script runner")
   },
 }
-

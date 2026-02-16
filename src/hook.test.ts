@@ -346,6 +346,28 @@ describe("feedback layer — should BLOCK (exit 2 + stderr suggestion)", () => {
   })
 })
 
+describe("docker compose — path false positive fix", () => {
+  test("docker compose --env-file .env.local -p myapp ps → allow", async () => {
+    expectAllow(await runHook("docker compose --env-file .env.local -p myapp ps"))
+  })
+
+  test("docker compose -f docker-compose.yml up -d → allow", async () => {
+    expectAllow(await runHook("docker compose -f docker-compose.yml up -d"))
+  })
+})
+
+describe("recursive feedback — should BLOCK sub-commands", () => {
+  test("find -exec python3 -c with json.loads → block", async () => {
+    const cmd = `find . -exec python3 -c "json.loads(data)" {} \\;`
+    expectBlock(await runHook(cmd), "jq")
+  })
+
+  test("find -exec node -e with JSON.parse → block", async () => {
+    const cmd = `find . -exec node -e "JSON.parse(data)" {} \\;`
+    expectBlock(await runHook(cmd), "jq")
+  })
+})
+
 describe("feedback layer — should NOT block legitimate usage", () => {
   test("python3 script.py → prompt (not block)", async () => {
     const result = await runHook("python3 script.py")

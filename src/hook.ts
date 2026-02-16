@@ -4,7 +4,7 @@
  * hall-pass: PreToolUse hook for Claude Code
  *
  * Routes by tool type:
- *   - Bash: safelist/git/sql/path checking with shfmt AST parsing
+ *   - Bash: unified recursive evaluation via evaluateCommand
  *   - Write/Edit: file path protection
  *
  * Decision protocol:
@@ -47,17 +47,13 @@ function prompt(reason: string): never {
   process.exit(1)
 }
 
-import { DB_CLIENTS, DANGEROUS_ENV_VARS } from "./safelist.ts"
 import { extractCommandInfos, extractRedirects } from "./parser.ts"
-import { extractSqlFromArgs, isSqlReadOnly } from "./sql.ts"
-import { isGitCommandSafe } from "./git.ts"
-import { isCommandSafe } from "./inspectors.ts"
 import { loadConfig } from "./config.ts"
 import { createDebug } from "./debug.ts"
 import { createAudit } from "./audit.ts"
-import { checkFilePath, checkCommandPaths } from "./paths.ts"
-import { unwrapCommand } from "./wrappers.ts"
+import { checkFilePath } from "./paths.ts"
 import { checkFeedbackRules } from "./feedback.ts"
+import { createEvalContext } from "./evaluate.ts"
 
 // -- Read hook input from stdin --
 
@@ -80,13 +76,6 @@ diag(`tool=${toolName} cmd=${command.slice(0, 80)}`)
 // -- Load config + initialize debug/audit --
 
 const config = await loadConfig()
-
-// Build dynamic sets from config
-const configSafe = new Set(config.commands.safe)
-const dbClients = new Set([...DB_CLIENTS, ...config.commands.db_clients])
-const protectedBranches = config.git.protected_branches.length > 0
-  ? new Set(config.git.protected_branches)
-  : undefined // use built-in defaults
 
 const debug = createDebug(config)
 const audit = createAudit(config)
@@ -148,13 +137,14 @@ try {
   prompt("shfmt json failed")
 }
 
-// -- Check every command in the AST --
+// -- Extract commands and AST-level data --
 
 const commandInfos = extractCommandInfos(ast)
 debug("commands", commandInfos.map(c => c.name))
 
-// -- Check redirects against path protection --
+// -- AST-level checks (not per-command) --
 
+// Redirects against protected paths
 const redirects = extractRedirects(ast)
 debug("redirects", redirects)
 
@@ -168,20 +158,7 @@ for (const redir of redirects) {
   }
 }
 
-// -- Check env var assignments for dangerous variables --
-
-for (const cmdInfo of commandInfos) {
-  for (const assign of cmdInfo.assigns) {
-    if (DANGEROUS_ENV_VARS.has(assign.name)) {
-      debug("env-block", { name: assign.name, value: assign.value })
-      audit.log({ tool: "Bash", input: command, decision: "prompt", reason: `dangerous env var: ${assign.name}`, layer: "safelist" })
-      prompt(`dangerous env: ${assign.name}`)
-    }
-  }
-}
-
-// -- Check feedback rules (pipeline-level patterns) --
-
+// Pipeline-level feedback rules (cross-command patterns)
 const feedbackSuggestion = checkFeedbackRules(commandInfos)
 if (feedbackSuggestion) {
   debug("feedback", { suggestion: feedbackSuggestion })
@@ -195,48 +172,24 @@ if (commandInfos.length === 0) {
   allow("no commands (variable assignment)")
 }
 
-for (const rawCmdInfo of commandInfos) {
-  const cmdInfo = unwrapCommand(rawCmdInfo)
-  const { name, args } = cmdInfo
+// -- Per-command evaluation --
 
-  // Path checking runs FIRST — even safe commands shouldn't touch protected files
-  const pathDecision = checkCommandPaths(cmdInfo, config)
-  if (!pathDecision.allowed) {
-    debug("path-block", { name, reason: pathDecision.reason })
-    audit.log({ tool: "Bash", input: command, decision: "prompt", reason: pathDecision.reason, layer: "paths" })
-    prompt(`path-blocked: ${name} ${pathDecision.reason}`)
+const ctx = createEvalContext(config, commandInfos)
+
+for (const cmdInfo of commandInfos) {
+  const result = ctx.evaluate(cmdInfo)
+  debug("eval", { name: cmdInfo.name, decision: result.decision })
+
+  if (result.decision === "block") {
+    audit.log({ tool: "Bash", input: command, decision: "block", reason: result.suggestion, layer: "evaluate" })
+    block(result.suggestion)
   }
 
-  // Git with config-overridden protected branches
-  if (name === "git" && protectedBranches) {
-    const safe = isGitCommandSafe(args, protectedBranches)
-    debug("git", { args, safe })
-    if (safe) continue
-    audit.log({ tool: "Bash", input: command, decision: "prompt", reason: "git: config-protected branch", layer: "inspected" })
-    prompt(`git: protected branch`)
+  if (result.decision === "prompt") {
+    audit.log({ tool: "Bash", input: command, decision: "prompt", reason: result.reason, layer: "evaluate" })
+    prompt(result.reason)
   }
-
-  // Unified safety check: SAFE_COMMANDS + inspectors (recursive)
-  if (isCommandSafe(cmdInfo) || configSafe.has(name)) {
-    debug("safe", { name })
-    continue
-  }
-
-  // DB clients get SQL-level inspection
-  if (dbClients.has(name)) {
-    const sql = extractSqlFromArgs(name, args)
-    const readOnly = sql ? isSqlReadOnly(sql) : false
-    debug("sql", { name, sql, readOnly })
-    if (sql && readOnly) continue
-    audit.log({ tool: "Bash", input: command, decision: "prompt", reason: `db client: ${name}`, layer: "sql" })
-    prompt(`db: ${name}`)
-  }
-
-  // Not approved — prompt
-  debug("prompt", { name })
-  audit.log({ tool: "Bash", input: command, decision: "prompt", reason: `not approved: ${name}`, layer: "command" })
-  prompt(`not approved: ${name}`)
 }
 
-audit.log({ tool: "Bash", input: command, decision: "allow", reason: "all commands safe", layer: "safelist" })
+audit.log({ tool: "Bash", input: command, decision: "allow", reason: "all commands safe", layer: "evaluate" })
 allow("all commands safe")
