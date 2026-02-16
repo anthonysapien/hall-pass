@@ -12,7 +12,7 @@ export interface AuditEntry {
   ts: string
   tool: string
   input: string
-  decision: "allow" | "prompt"
+  decision: "allow" | "prompt" | "block"
   reason: string
   layer: string
 }

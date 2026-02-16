@@ -5,6 +5,7 @@ const HOOK_PATH = new URL("./hook.ts", import.meta.url).pathname
 interface HookResult {
   exitCode: number
   stdout: string
+  stderr: string
 }
 
 /** Run the hook with a simulated Claude Code Bash input */
@@ -15,9 +16,12 @@ async function runHook(command: string): Promise<HookResult> {
     stdout: "pipe",
     stderr: "pipe",
   })
-  const stdout = await new Response(proc.stdout).text()
+  const [stdout, stderr] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ])
   await proc.exited
-  return { exitCode: proc.exitCode ?? 1, stdout }
+  return { exitCode: proc.exitCode ?? 1, stdout, stderr }
 }
 
 /** Run the hook with a Write/Edit tool input */
@@ -28,9 +32,12 @@ async function runHookForTool(toolName: string, toolInput: Record<string, unknow
     stdout: "pipe",
     stderr: "pipe",
   })
-  const stdout = await new Response(proc.stdout).text()
+  const [stdout, stderr] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ])
   await proc.exited
-  return { exitCode: proc.exitCode ?? 1, stdout }
+  return { exitCode: proc.exitCode ?? 1, stdout, stderr }
 }
 
 /** Check that the hook allowed (exit 0 + permissionDecision: "allow" on stdout) */
@@ -43,6 +50,15 @@ function expectAllow(result: HookResult) {
 /** Check that the hook prompted (exit 1, no allow JSON) */
 function expectPrompt(result: HookResult) {
   expect(result.exitCode).toBe(1)
+}
+
+/** Check that the hook blocked with a feedback suggestion (exit 2 + stderr) */
+function expectBlock(result: HookResult, containsText?: string) {
+  expect(result.exitCode).toBe(2)
+  expect(result.stderr.length).toBeGreaterThan(0)
+  if (containsText) {
+    expect(result.stderr).toContain(containsText)
+  }
 }
 
 describe("hook integration", () => {
@@ -304,5 +320,46 @@ describe("Write/Edit tool integration", () => {
     test("no file_path → allow", async () => {
       expectAllow(await runHookForTool("Edit", {}))
     })
+  })
+})
+
+describe("feedback layer — should BLOCK (exit 2 + stderr suggestion)", () => {
+  test("curl | python3 -c with json.loads → block with jq suggestion", async () => {
+    const cmd = `curl -s https://api.example.com | python3 -c "import json, sys; print(json.loads(sys.stdin.read())['key'])"`
+    expectBlock(await runHook(cmd), "jq")
+  })
+
+  test("curl | node -e with JSON.parse → block with jq suggestion", async () => {
+    const cmd = `curl -s https://api.example.com | node -e "process.stdin.on('data', d => console.log(JSON.parse(d).key))"`
+    expectBlock(await runHook(cmd), "jq")
+  })
+
+  test("python3 -c with string .split() → block with shell builtins suggestion", async () => {
+    const cmd = `python3 -c "print('a,b,c'.split(',')[0])"`
+    expectBlock(await runHook(cmd), "shell builtins")
+  })
+
+  test("node -e with .trim() → block with shell builtins suggestion", async () => {
+    const cmd = `node -e "console.log(' hello '.trim())"`
+    expectBlock(await runHook(cmd), "shell builtins")
+  })
+})
+
+describe("feedback layer — should NOT block legitimate usage", () => {
+  test("python3 script.py → prompt (not block)", async () => {
+    const result = await runHook("python3 script.py")
+    // Should prompt (inspected command running a script), NOT block
+    expect(result.exitCode).not.toBe(2)
+  })
+
+  test("node server.js → prompt (not block)", async () => {
+    const result = await runHook("node server.js")
+    // Should be allowed (no -e flag), NOT blocked
+    expect(result.exitCode).not.toBe(2)
+  })
+
+  test("curl | jq → allow (already using jq)", async () => {
+    const result = await runHook("curl -s https://example.com | jq .data")
+    expectAllow(result)
   })
 })

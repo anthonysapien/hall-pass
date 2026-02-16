@@ -34,6 +34,13 @@ function allow(reason: string): never {
   process.exit(0)
 }
 
+/** Block with a suggestion message sent to Claude via stderr. */
+function block(suggestion: string): never {
+  diag(`BLOCK ${suggestion}`)
+  process.stderr.write(suggestion)
+  process.exit(2)
+}
+
 /** Exit with no opinion — falls through to normal permission prompt. */
 function prompt(reason: string): never {
   diag(`PROMPT ${reason}`)
@@ -50,6 +57,7 @@ import { createDebug } from "./debug.ts"
 import { createAudit } from "./audit.ts"
 import { checkFilePath, checkCommandPaths } from "./paths.ts"
 import { unwrapCommand } from "./wrappers.ts"
+import { checkFeedbackRules } from "./feedback.ts"
 
 // -- Read hook input from stdin --
 
@@ -170,6 +178,15 @@ for (const cmdInfo of commandInfos) {
       prompt(`dangerous env: ${assign.name}`)
     }
   }
+}
+
+// -- Check feedback rules (pipeline-level patterns) --
+
+const feedbackSuggestion = checkFeedbackRules(commandInfos)
+if (feedbackSuggestion) {
+  debug("feedback", { suggestion: feedbackSuggestion })
+  audit.log({ tool: "Bash", input: command, decision: "block", reason: feedbackSuggestion, layer: "feedback" })
+  block(feedbackSuggestion)
 }
 
 // No commands found (e.g., bare variable assignment) — safe
