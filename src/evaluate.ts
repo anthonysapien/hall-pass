@@ -27,7 +27,7 @@ import { extractSqlFromArgs, isSqlReadOnly } from "./sql.ts"
 export type EvalResult =
   | { decision: "allow"; reason: string }
   | { decision: "prompt"; reason: string }
-  | { decision: "block"; suggestion: string }
+  | { decision: "feedback"; suggestion: string }
 
 export interface EvalContext {
   config: HallPassConfig
@@ -82,7 +82,7 @@ export function evaluateCommand(rawCmdInfo: CommandInfo, ctx: EvalContext): Eval
   // 3. Per-command feedback rules
   const feedback = checkCommandFeedback(cmdInfo, ctx.pipelineCommands)
   if (feedback) {
-    return { decision: "block", suggestion: feedback }
+    return { decision: "feedback", suggestion: feedback }
   }
 
   // 4. Path checking (only for commands whose positional args are file paths)

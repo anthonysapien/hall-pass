@@ -52,12 +52,14 @@ function expectPrompt(result: HookResult) {
   expect(result.exitCode).toBe(1)
 }
 
-/** Check that the hook blocked with a feedback suggestion (exit 2 + stderr) */
-function expectBlock(result: HookResult, containsText?: string) {
-  expect(result.exitCode).toBe(2)
-  expect(result.stderr.length).toBeGreaterThan(0)
+/** Check that the hook returned ask + feedback suggestion (exit 0 + ask JSON with additionalContext) */
+function expectFeedback(result: HookResult, containsText?: string) {
+  expect(result.exitCode).toBe(0)
+  const parsed = JSON.parse(result.stdout)
+  expect(parsed.hookSpecificOutput.permissionDecision).toBe("ask")
+  expect(typeof parsed.hookSpecificOutput.additionalContext).toBe("string")
   if (containsText) {
-    expect(result.stderr).toContain(containsText)
+    expect(parsed.hookSpecificOutput.additionalContext).toContain(containsText)
   }
 }
 
@@ -324,25 +326,25 @@ describe("Write/Edit tool integration", () => {
   })
 })
 
-describe("feedback layer — should BLOCK (exit 2 + stderr suggestion)", () => {
-  test("curl | python3 -c with json.loads → block with jq suggestion", async () => {
+describe("feedback layer — should ASK with additionalContext", () => {
+  test("curl | python3 -c with json.loads → ask with jq suggestion", async () => {
     const cmd = `curl -s https://api.example.com | python3 -c "import json, sys; print(json.loads(sys.stdin.read())['key'])"`
-    expectBlock(await runHook(cmd), "jq")
+    expectFeedback(await runHook(cmd), "jq")
   })
 
-  test("curl | node -e with JSON.parse → block with jq suggestion", async () => {
+  test("curl | node -e with JSON.parse → ask with jq suggestion", async () => {
     const cmd = `curl -s https://api.example.com | node -e "process.stdin.on('data', d => console.log(JSON.parse(d).key))"`
-    expectBlock(await runHook(cmd), "jq")
+    expectFeedback(await runHook(cmd), "jq")
   })
 
-  test("python3 -c with string .split() → block with shell builtins suggestion", async () => {
+  test("python3 -c with string .split() → ask with shell builtins suggestion", async () => {
     const cmd = `python3 -c "print('a,b,c'.split(',')[0])"`
-    expectBlock(await runHook(cmd), "shell builtins")
+    expectFeedback(await runHook(cmd), "shell builtins")
   })
 
-  test("node -e with .trim() → block with shell builtins suggestion", async () => {
+  test("node -e with .trim() → ask with shell builtins suggestion", async () => {
     const cmd = `node -e "console.log(' hello '.trim())"`
-    expectBlock(await runHook(cmd), "shell builtins")
+    expectFeedback(await runHook(cmd), "shell builtins")
   })
 })
 
@@ -356,29 +358,29 @@ describe("docker compose — path false positive fix", () => {
   })
 })
 
-describe("recursive feedback — should BLOCK sub-commands", () => {
-  test("find -exec python3 -c with json.loads → block", async () => {
+describe("recursive feedback — should ASK with additionalContext", () => {
+  test("find -exec python3 -c with json.loads → ask with jq hint", async () => {
     const cmd = `find . -exec python3 -c "json.loads(data)" {} \\;`
-    expectBlock(await runHook(cmd), "jq")
+    expectFeedback(await runHook(cmd), "jq")
   })
 
-  test("find -exec node -e with JSON.parse → block", async () => {
+  test("find -exec node -e with JSON.parse → ask with jq hint", async () => {
     const cmd = `find . -exec node -e "JSON.parse(data)" {} \\;`
-    expectBlock(await runHook(cmd), "jq")
+    expectFeedback(await runHook(cmd), "jq")
   })
 })
 
 describe("feedback layer — should NOT block legitimate usage", () => {
-  test("python3 script.py → prompt (not block)", async () => {
+  test("python3 script.py → allow (not deny)", async () => {
     const result = await runHook("python3 script.py")
-    // Should prompt (inspected command running a script), NOT block
-    expect(result.exitCode).not.toBe(2)
+    // Should allow (inspector sees no -c flag), NOT deny
+    expectAllow(result)
   })
 
-  test("node server.js → prompt (not block)", async () => {
+  test("node server.js → allow (not deny)", async () => {
     const result = await runHook("node server.js")
-    // Should be allowed (no -e flag), NOT blocked
-    expect(result.exitCode).not.toBe(2)
+    // Should be allowed (no -e flag), NOT denied
+    expectAllow(result)
   })
 
   test("curl | jq → allow (already using jq)", async () => {

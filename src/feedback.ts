@@ -2,8 +2,8 @@
  * Agent feedback layer ("isThisIdiotic").
  *
  * Checks commands against structured feedback rules. When a rule matches,
- * hall-pass blocks the command (exit 2) and sends a suggestion via stderr
- * that Claude receives in-context.
+ * hall-pass denies the command (exit 0 + permissionDecision: "deny") and
+ * sends a suggestion via permissionDecisionReason that Claude sees in-context.
  *
  * Rules receive the full list of CommandInfo objects so they can reason
  * about pipeline context (e.g., "python3 -c receiving piped input from curl").

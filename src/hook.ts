@@ -8,9 +8,8 @@
  *   - Write/Edit: file path protection
  *
  * Decision protocol:
- *   Exit 0 + JSON { permissionDecision: "allow" } = auto-approve (skip prompt)
- *   Exit 0 + JSON { permissionDecision: "deny" } = block
- *   Exit 2 = block (stderr sent to Claude)
+ *   Exit 0 + JSON { permissionDecision: "allow" }  = auto-approve (skip prompt)
+ *   Exit 0 + JSON { permissionDecision: "ask" }    = prompt user + nudge Claude via additionalContext
  *   Exit 1 = no opinion (fall through to normal permission prompt)
  */
 
@@ -34,11 +33,18 @@ function allow(reason: string): never {
   process.exit(0)
 }
 
-/** Block with a suggestion message sent to Claude via stderr. */
-function block(suggestion: string): never {
-  diag(`BLOCK ${suggestion}`)
-  process.stderr.write(suggestion)
-  process.exit(2)
+/** Prompt the user while nudging Claude with feedback via additionalContext. */
+function feedback(suggestion: string): never {
+  diag(`FEEDBACK ${suggestion}`)
+  const output = JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "ask",
+      additionalContext: suggestion,
+    },
+  })
+  process.stdout.write(output)
+  process.exit(0)
 }
 
 /** Exit with no opinion — falls through to normal permission prompt. */
@@ -162,8 +168,8 @@ for (const redir of redirects) {
 const feedbackSuggestion = checkFeedbackRules(commandInfos)
 if (feedbackSuggestion) {
   debug("feedback", { suggestion: feedbackSuggestion })
-  audit.log({ tool: "Bash", input: command, decision: "block", reason: feedbackSuggestion, layer: "feedback" })
-  block(feedbackSuggestion)
+  audit.log({ tool: "Bash", input: command, decision: "feedback", reason: feedbackSuggestion, layer: "feedback" })
+  feedback(feedbackSuggestion)
 }
 
 // No commands found (e.g., bare variable assignment) — safe
@@ -180,9 +186,9 @@ for (const cmdInfo of commandInfos) {
   const result = ctx.evaluate(cmdInfo)
   debug("eval", { name: cmdInfo.name, decision: result.decision })
 
-  if (result.decision === "block") {
-    audit.log({ tool: "Bash", input: command, decision: "block", reason: result.suggestion, layer: "evaluate" })
-    block(result.suggestion)
+  if (result.decision === "feedback") {
+    audit.log({ tool: "Bash", input: command, decision: "feedback", reason: result.suggestion, layer: "evaluate" })
+    feedback(result.suggestion)
   }
 
   if (result.decision === "prompt") {

@@ -330,16 +330,16 @@ describe("evaluateCommand", () => {
   })
 
   describe("recursive evaluation", () => {
-    test("find -exec python3 -c with JSON → block (recursive feedback)", () => {
+    test("find -exec python3 -c with JSON → feedback (recursive)", () => {
       const c = cmd("find", ".", "-exec", "python3", "-c", "json.loads(data)", "{}", ";")
       const result = evaluateCommand(c, makeCtx())
-      expect(result.decision).toBe("block")
+      expect(result.decision).toBe("feedback")
     })
 
-    test("xargs with python3 -c with string ops → block (recursive feedback)", () => {
+    test("xargs with python3 -c with string ops → feedback (recursive)", () => {
       const c = cmd("xargs", "python3", "-c", "print('a,b,c'.split(',')[0])")
       const result = evaluateCommand(c, makeCtx())
-      expect(result.decision).toBe("block")
+      expect(result.decision).toBe("feedback")
     })
   })
 })
