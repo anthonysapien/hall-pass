@@ -47,11 +47,11 @@ function prompt(reason: string): never {
   process.exit(1)
 }
 
-import { SAFE_COMMANDS, DB_CLIENTS, INSPECTED_COMMANDS, DANGEROUS_ENV_VARS } from "./safelist.ts"
+import { DB_CLIENTS, DANGEROUS_ENV_VARS } from "./safelist.ts"
 import { extractCommandInfos, extractRedirects } from "./parser.ts"
 import { extractSqlFromArgs, isSqlReadOnly } from "./sql.ts"
 import { isGitCommandSafe } from "./git.ts"
-import { isInspectedCommandSafe } from "./inspectors.ts"
+import { isCommandSafe } from "./inspectors.ts"
 import { loadConfig } from "./config.ts"
 import { createDebug } from "./debug.ts"
 import { createAudit } from "./audit.ts"
@@ -82,7 +82,7 @@ diag(`tool=${toolName} cmd=${command.slice(0, 80)}`)
 const config = await loadConfig()
 
 // Build dynamic sets from config
-const safeCommands = new Set([...SAFE_COMMANDS, ...config.commands.safe])
+const configSafe = new Set(config.commands.safe)
 const dbClients = new Set([...DB_CLIENTS, ...config.commands.db_clients])
 const protectedBranches = config.git.protected_branches.length > 0
   ? new Set(config.git.protected_branches)
@@ -207,24 +207,19 @@ for (const rawCmdInfo of commandInfos) {
     prompt(`path-blocked: ${name} ${pathDecision.reason}`)
   }
 
-  if (safeCommands.has(name)) {
-    debug("safelist", { name, decision: "allow" })
-    continue
+  // Git with config-overridden protected branches
+  if (name === "git" && protectedBranches) {
+    const safe = isGitCommandSafe(args, protectedBranches)
+    debug("git", { args, safe })
+    if (safe) continue
+    audit.log({ tool: "Bash", input: command, decision: "prompt", reason: "git: config-protected branch", layer: "inspected" })
+    prompt(`git: protected branch`)
   }
 
-  // Commands that get deeper argument inspection
-  if (INSPECTED_COMMANDS.has(name)) {
-    if (name === "git") {
-      const safe = isGitCommandSafe(args, protectedBranches)
-      debug("git", { args, safe })
-      if (safe) continue
-    } else {
-      const safe = isInspectedCommandSafe(cmdInfo)
-      debug("inspected", { name, safe })
-      if (safe) continue
-    }
-    audit.log({ tool: "Bash", input: command, decision: "prompt", reason: `inspected command: ${name}`, layer: "inspected" })
-    prompt(`inspected: ${name}`)
+  // Unified safety check: SAFE_COMMANDS + inspectors (recursive)
+  if (isCommandSafe(cmdInfo) || configSafe.has(name)) {
+    debug("safe", { name })
+    continue
   }
 
   // DB clients get SQL-level inspection
@@ -237,10 +232,10 @@ for (const rawCmdInfo of commandInfos) {
     prompt(`db: ${name}`)
   }
 
-  // Unknown command — prompt
-  debug("unknown", { name, decision: "prompt" })
-  audit.log({ tool: "Bash", input: command, decision: "prompt", reason: `unknown command: ${name}`, layer: "unknown" })
-  prompt(`unknown: ${name}`)
+  // Not approved — prompt
+  debug("prompt", { name })
+  audit.log({ tool: "Bash", input: command, decision: "prompt", reason: `not approved: ${name}`, layer: "command" })
+  prompt(`not approved: ${name}`)
 }
 
 audit.log({ tool: "Bash", input: command, decision: "allow", reason: "all commands safe", layer: "safelist" })

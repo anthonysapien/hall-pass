@@ -76,6 +76,7 @@ describe("hook integration", () => {
       "docker ps --format '{{.Names}}'",
       "git log --oneline -5 | cat",
       "find . -name '*.ts' | wc -l",
+      `find /path -name "*.tsx" -type f -exec grep -l "<Gate " {} \\; 2>/dev/null | head -10`,
       "echo hello && echo world || echo fallback",
       "lsof -i :3334 | grep LISTEN 2>/dev/null",
       "TEST_BASE_URL=http://localhost:3333 bun test server/tests/search.test.ts 2>&1",

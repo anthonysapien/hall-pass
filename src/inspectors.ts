@@ -6,27 +6,36 @@
  */
 
 import type { CommandInfo } from "./parser.ts"
+import { SAFE_COMMANDS } from "./safelist.ts"
+import { isGitCommandSafe } from "./git.ts"
 
 /**
- * Check if an inspected command is safe based on its arguments.
- * Returns true = safe, false = prompt.
+ * Check if a command is safe based on its name and arguments.
+ * Walks the same decision tree as the main hook loop:
+ *   1. SAFE_COMMANDS → auto-approve
+ *   2. Inspectors → delegate (which may recurse for find -exec, xargs, etc.)
+ *   3. Unknown → prompt
  */
-export function isInspectedCommandSafe(cmdInfo: CommandInfo): boolean {
+export function isCommandSafe(cmdInfo: CommandInfo): boolean {
   const { name, args } = cmdInfo
+  if (SAFE_COMMANDS.has(name)) return true
   const inspector = INSPECTORS[name]
   if (inspector) return inspector(args)
-  return false // no inspector = prompt
+  return false
 }
 
 type Inspector = (args: string[]) => boolean
 
 const INSPECTORS: Record<string, Inspector> = {
+  // -- Version control --
+
+  git: (args) => isGitCommandSafe(args),
+
   // -- Commands that proxy other commands --
 
   xargs: (args) => {
-    // xargs is safe only when it runs a safelisted command
-    // xargs [flags] command [args...]
-    // Find the command that xargs will execute (first non-flag arg after xargs)
+    // xargs [flags] command [initial-args...]
+    // Extract the sub-command and its visible args, evaluate recursively
     for (let i = 1; i < args.length; i++) {
       const arg = args[i]
       // Skip xargs flags and their values
@@ -36,9 +45,9 @@ const INSPECTORS: Record<string, Inspector> = {
         continue
       }
       if (arg.startsWith("-")) continue
-      // First positional arg = the command xargs will run
-      // Only allow if it's a known-safe command
-      return XARGS_SAFE.has(arg)
+      // Everything from here is the sub-command + its args
+      const subArgs = args.slice(i)
+      return isCommandSafe({ name: subArgs[0], args: subArgs, assigns: [] })
     }
     // No command specified — xargs defaults to echo, which is safe
     return true
@@ -53,9 +62,25 @@ const INSPECTORS: Record<string, Inspector> = {
 
   find: (args) => {
     // find is safe UNLESS it uses -exec, -execdir, -delete, or -ok
-    for (const arg of args) {
-      if (arg === "-exec" || arg === "-execdir" || arg === "-delete" || arg === "-ok") {
-        return false
+    // For -exec/-execdir, extract the sub-command and evaluate recursively
+    for (let i = 0; i < args.length; i++) {
+      const arg = args[i]
+
+      // -delete and -ok always prompt (no sub-command to inspect)
+      if (arg === "-delete" || arg === "-ok") return false
+
+      if (arg === "-exec" || arg === "-execdir") {
+        // Extract sub-command: everything from next arg up to ; or +
+        const subArgs: string[] = []
+        for (let j = i + 1; j < args.length; j++) {
+          if (args[j] === ";" || args[j] === "+") {
+            i = j // skip past terminator
+            break
+          }
+          subArgs.push(args[j])
+        }
+        if (subArgs.length === 0) return false
+        if (!isCommandSafe({ name: subArgs[0], args: subArgs, assigns: [] })) return false
       }
     }
     return true
@@ -182,9 +207,3 @@ const INSPECTORS: Record<string, Inspector> = {
   },
 }
 
-/** Commands that are safe targets for xargs to execute. */
-const XARGS_SAFE = new Set([
-  "echo", "printf", "grep", "rg", "head", "tail", "cat", "wc",
-  "ls", "file", "stat", "basename", "dirname", "realpath",
-  "sort", "uniq", "tr", "cut", "jq", "kill",
-])

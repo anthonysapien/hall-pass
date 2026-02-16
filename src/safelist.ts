@@ -40,21 +40,6 @@ export const SAFE_COMMANDS = new Set([
   "shfmt",
 ])
 
-/**
- * Commands that get deeper inspection of their arguments.
- * Not auto-approved — their subcommands/flags are checked for safety.
- */
-export const INSPECTED_COMMANDS = new Set([
-  "git",
-  // Commands that can proxy/execute arbitrary other commands
-  "xargs",
-  // Commands with dangerous flag variants
-  "find", "sed", "awk",
-  "kill", "chmod",
-  "docker",
-  "node", "python", "python3",
-  "source",
-])
 
 /**
  * Database clients that get deeper inspection.
