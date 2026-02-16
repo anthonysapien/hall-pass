@@ -61,11 +61,11 @@ function expectPass(result: HookResult) {
   expect(result.stdout).toBe("")
 }
 
-/** Check that the hook returned ask + feedback suggestion (exit 0 + ask JSON with additionalContext) */
+/** Check that the hook allowed with feedback (exit 0 + allow JSON with additionalContext) */
 function expectFeedback(result: HookResult, containsText?: string) {
   expect(result.exitCode).toBe(0)
   const parsed = JSON.parse(result.stdout)
-  expect(parsed.hookSpecificOutput.permissionDecision).toBe("ask")
+  expect(parsed.hookSpecificOutput.permissionDecision).toBe("allow")
   expect(typeof parsed.hookSpecificOutput.additionalContext).toBe("string")
   if (containsText) {
     expect(parsed.hookSpecificOutput.additionalContext).toContain(containsText)
@@ -357,23 +357,23 @@ describe("Write/Edit tool integration", () => {
   })
 })
 
-describe("feedback layer — should ASK with additionalContext", () => {
-  test("curl | python3 -c with json.loads → ask with jq suggestion", async () => {
+describe("feedback layer — should ALLOW with additionalContext nudge", () => {
+  test("curl | python3 -c with json.loads → allow with jq nudge", async () => {
     const cmd = `curl -s https://api.example.com | python3 -c "import json, sys; print(json.loads(sys.stdin.read())['key'])"`
     expectFeedback(await runHook(cmd), "jq")
   })
 
-  test("curl | node -e with JSON.parse → ask with jq suggestion", async () => {
+  test("curl | node -e with JSON.parse → allow with jq nudge", async () => {
     const cmd = `curl -s https://api.example.com | node -e "process.stdin.on('data', d => console.log(JSON.parse(d).key))"`
     expectFeedback(await runHook(cmd), "jq")
   })
 
-  test("python3 -c with string .split() → ask with shell builtins suggestion", async () => {
+  test("python3 -c with string .split() → allow with shell builtins nudge", async () => {
     const cmd = `python3 -c "print('a,b,c'.split(',')[0])"`
     expectFeedback(await runHook(cmd), "shell builtins")
   })
 
-  test("node -e with .trim() → ask with shell builtins suggestion", async () => {
+  test("node -e with .trim() → allow with shell builtins nudge", async () => {
     const cmd = `node -e "console.log(' hello '.trim())"`
     expectFeedback(await runHook(cmd), "shell builtins")
   })
@@ -389,13 +389,13 @@ describe("docker compose — path false positive fix", () => {
   })
 })
 
-describe("recursive feedback — should ASK with additionalContext", () => {
-  test("find -exec python3 -c with json.loads → ask with jq hint", async () => {
+describe("recursive feedback — should ALLOW with additionalContext nudge", () => {
+  test("find -exec python3 -c with json.loads → allow with jq nudge", async () => {
     const cmd = `find . -exec python3 -c "json.loads(data)" {} \\;`
     expectFeedback(await runHook(cmd), "jq")
   })
 
-  test("find -exec node -e with JSON.parse → ask with jq hint", async () => {
+  test("find -exec node -e with JSON.parse → allow with jq nudge", async () => {
     const cmd = `find . -exec node -e "JSON.parse(data)" {} \\;`
     expectFeedback(await runHook(cmd), "jq")
   })

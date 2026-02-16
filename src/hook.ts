@@ -8,9 +8,9 @@
  *   - Write/Edit: file path protection
  *
  * Decision protocol (all exit 0 + JSON on stdout):
- *   { permissionDecision: "allow" }                = auto-approve (skip prompt)
- *   { permissionDecision: "ask" }                  = prompt user for permission
- *   { permissionDecision: "ask", additionalContext } = prompt user + nudge Claude
+ *   { permissionDecision: "allow" }                  = auto-approve
+ *   { permissionDecision: "allow", additionalContext } = auto-approve + nudge Claude
+ *   { permissionDecision: "ask" }                    = prompt user for permission
  */
 
 // Diagnostic log — always writes to /tmp so we can debug hook failures
@@ -33,13 +33,13 @@ function allow(reason: string): never {
   process.exit(0)
 }
 
-/** Prompt the user while nudging Claude with feedback via additionalContext. */
+/** Auto-approve but nudge Claude with feedback via additionalContext. */
 function feedback(suggestion: string): never {
   diag(`FEEDBACK ${suggestion}`)
   const output = JSON.stringify({
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
-      permissionDecision: "ask",
+      permissionDecision: "allow",
       additionalContext: suggestion,
     },
   })
