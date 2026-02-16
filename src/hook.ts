@@ -84,7 +84,7 @@ try {
 }
 
 const command = (toolInput.command as string) ?? ""
-diag(`tool=${toolName} cmd=${command.slice(0, 80)}`)
+diag(`tool=${toolName} cmd=${command.slice(0, 80)} keys=${Object.keys(toolInput).join(",")}`)
 
 // -- Load config + initialize debug/audit --
 
@@ -189,6 +189,8 @@ if (commandInfos.length === 0) {
 
 const ctx = createEvalContext(config, commandInfos)
 
+let hasPass = false
+
 for (const cmdInfo of commandInfos) {
   const result = ctx.evaluate(cmdInfo)
   debug("eval", { name: cmdInfo.name, decision: result.decision })
@@ -202,6 +204,17 @@ for (const cmdInfo of commandInfos) {
     audit.log({ tool: "Bash", input: command, decision: "prompt", reason: result.reason, layer: "evaluate" })
     prompt(result.reason)
   }
+
+  if (result.decision === "pass") {
+    hasPass = true
+  }
+}
+
+// If any command was unknown (pass), step aside — let Claude Code decide
+if (hasPass) {
+  diag("PASS pipeline contains unknown commands")
+  audit.log({ tool: "Bash", input: command, decision: "pass", reason: "unknown commands in pipeline", layer: "evaluate" })
+  process.exit(0)
 }
 
 audit.log({ tool: "Bash", input: command, decision: "allow", reason: "all commands safe", layer: "evaluate" })

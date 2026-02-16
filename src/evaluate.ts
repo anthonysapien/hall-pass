@@ -17,7 +17,7 @@
 
 import type { CommandInfo } from "./parser.ts"
 import type { HallPassConfig } from "./config.ts"
-import { SAFE_COMMANDS, DB_CLIENTS, DANGEROUS_ENV_VARS } from "./safelist.ts"
+import { SAFE_COMMANDS, DANGEROUS_COMMANDS, DB_CLIENTS, DANGEROUS_ENV_VARS } from "./safelist.ts"
 import { INSPECTORS } from "./inspectors.ts"
 import { unwrapCommand } from "./wrappers.ts"
 import { isPathAwareCommand, checkCommandPaths } from "./paths.ts"
@@ -27,6 +27,7 @@ import { extractSqlFromArgs, isSqlReadOnly } from "./sql.ts"
 export type EvalResult =
   | { decision: "allow"; reason: string }
   | { decision: "prompt"; reason: string }
+  | { decision: "pass"; reason: string }
   | { decision: "feedback"; suggestion: string }
 
 export interface EvalContext {
@@ -109,8 +110,13 @@ export function evaluateBashCommand(rawCmdInfo: CommandInfo, ctx: EvalContext): 
     return dbClientInspect(cmdInfo)
   }
 
-  // 7. Unknown command → prompt
-  return { decision: "prompt", reason: `not approved: ${name}` }
+  // 7. Dangerous commands — always prompt
+  if (DANGEROUS_COMMANDS.has(name)) {
+    return { decision: "prompt", reason: `dangerous: ${name}` }
+  }
+
+  // 8. Unknown command → pass (no opinion, let Claude Code decide)
+  return { decision: "pass", reason: `unknown: ${name}` }
 }
 
 /**

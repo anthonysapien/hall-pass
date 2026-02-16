@@ -52,6 +52,25 @@ export const DB_CLIENTS = new Set([
 ])
 
 /**
+ * Commands that should always prompt — known to be destructive or dangerous.
+ * These are checked after inspectors, before the unknown-command passthrough.
+ */
+export const DANGEROUS_COMMANDS = new Set([
+  // File deletion
+  "rm", "rmdir", "unlink", "shred",
+  // Privilege escalation
+  "sudo", "su", "doas",
+  // Raw disk / system
+  "dd", "mkfs", "fdisk", "parted", "mount", "umount",
+  // System control
+  "shutdown", "reboot", "halt", "poweroff", "init",
+  // Process control (broad)
+  "killall", "pkill",
+  // Dangerous network
+  "nc", "ncat",
+])
+
+/**
  * Environment variables that should never be set as command prefixes.
  * These can inject code into otherwise-safe commands.
  */

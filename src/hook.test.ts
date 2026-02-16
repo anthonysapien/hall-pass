@@ -55,6 +55,12 @@ function expectPrompt(result: HookResult) {
   expect(parsed.hookSpecificOutput.additionalContext).toBeUndefined()
 }
 
+/** Check that the hook passed (exit 0, no stdout — no opinion) */
+function expectPass(result: HookResult) {
+  expect(result.exitCode).toBe(0)
+  expect(result.stdout).toBe("")
+}
+
 /** Check that the hook returned ask + feedback suggestion (exit 0 + ask JSON with additionalContext) */
 function expectFeedback(result: HookResult, containsText?: string) {
   expect(result.exitCode).toBe(0)
@@ -137,20 +143,31 @@ describe("hook integration", () => {
     }
   })
 
-  describe("should PROMPT (exit 1)", () => {
+  describe("should PROMPT for dangerous commands", () => {
     const prompted = [
       "rm -rf /",
       "sudo apt install foo",
       "dd if=/dev/zero of=disk.img",
-      "some-unknown-command --flag",
       "echo $(rm -rf /)",
-      "git add . && unknown-cmd",
       "safe-looking | rm -rf /tmp",
     ]
 
     for (const cmd of prompted) {
       test(cmd, async () => {
         expectPrompt(await runHook(cmd))
+      })
+    }
+  })
+
+  describe("should PASS for unknown commands (no opinion)", () => {
+    const passed = [
+      "some-unknown-command --flag",
+      "git add . && unknown-cmd",
+    ]
+
+    for (const cmd of passed) {
+      test(cmd, async () => {
+        expectPass(await runHook(cmd))
       })
     }
   })
@@ -174,17 +191,28 @@ describe("hook integration", () => {
     }
   })
 
-  describe("transparent wrappers — should PROMPT for unsafe wrapped commands", () => {
+  describe("transparent wrappers — should PROMPT for dangerous wrapped commands", () => {
     const prompted = [
       "nohup rm -rf /",
       "nice -n 10 rm -rf /",
-      "timeout 30 some-unknown-command",
-      "nohup unknown-tool --flag",
     ]
 
     for (const cmd of prompted) {
       test(cmd, async () => {
         expectPrompt(await runHook(cmd))
+      })
+    }
+  })
+
+  describe("transparent wrappers — should PASS for unknown wrapped commands", () => {
+    const passed = [
+      "timeout 30 some-unknown-command",
+      "nohup unknown-tool --flag",
+    ]
+
+    for (const cmd of passed) {
+      test(cmd, async () => {
+        expectPass(await runHook(cmd))
       })
     }
   })

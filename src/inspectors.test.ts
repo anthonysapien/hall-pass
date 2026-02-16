@@ -275,8 +275,9 @@ describe("evaluateBashCommand", () => {
     })
   })
 
-  test("unknown command returns prompt", () => {
-    expectPrompt(cmd("unknown-tool", "--flag"))
+  test("unknown command returns pass (no opinion)", () => {
+    const result = evaluateBashCommand(cmd("unknown-tool", "--flag"), makeCtx())
+    expect(result.decision).toBe("pass")
   })
 
   describe("DB clients via evaluateBashCommand", () => {
