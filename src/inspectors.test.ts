@@ -37,12 +37,6 @@ describe("isInspectedCommandSafe", () => {
     })
   })
 
-  describe("nohup", () => {
-    test("always unsafe", () => {
-      expect(isInspectedCommandSafe(cmd("nohup", "rm", "-rf", "/"))).toBe(false)
-    })
-  })
-
   describe("source", () => {
     test("always unsafe", () => {
       expect(isInspectedCommandSafe(cmd("source", "./evil.sh"))).toBe(false)

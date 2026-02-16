@@ -49,6 +49,7 @@ import { loadConfig } from "./config.ts"
 import { createDebug } from "./debug.ts"
 import { createAudit } from "./audit.ts"
 import { checkFilePath, checkCommandPaths } from "./paths.ts"
+import { unwrapCommand } from "./wrappers.ts"
 
 // -- Read hook input from stdin --
 
@@ -177,7 +178,8 @@ if (commandInfos.length === 0) {
   allow("no commands (variable assignment)")
 }
 
-for (const cmdInfo of commandInfos) {
+for (const rawCmdInfo of commandInfos) {
+  const cmdInfo = unwrapCommand(rawCmdInfo)
   const { name, args } = cmdInfo
 
   // Path checking runs FIRST — even safe commands shouldn't touch protected files

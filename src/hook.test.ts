@@ -133,6 +133,40 @@ describe("hook integration", () => {
     }
   })
 
+  describe("transparent wrappers — should ALLOW safe wrapped commands", () => {
+    const allowed = [
+      "nohup bun server/index.ts",
+      "nohup bun --env-file=.env.test.local server/index.ts",
+      "nice bun server/index.ts",
+      "nice -n 10 bun server/index.ts",
+      "timeout 30 bun server/index.ts",
+      "timeout --signal=TERM 30 bun server/index.ts",
+      "nohup nice bun server/index.ts",
+      "timeout 30 git status",
+    ]
+
+    for (const cmd of allowed) {
+      test(cmd, async () => {
+        expectAllow(await runHook(cmd))
+      })
+    }
+  })
+
+  describe("transparent wrappers — should PROMPT for unsafe wrapped commands", () => {
+    const prompted = [
+      "nohup rm -rf /",
+      "nice -n 10 rm -rf /",
+      "timeout 30 some-unknown-command",
+      "nohup unknown-tool --flag",
+    ]
+
+    for (const cmd of prompted) {
+      test(cmd, async () => {
+        expectPrompt(await runHook(cmd))
+      })
+    }
+  })
+
   test("empty command falls through", async () => {
     expectPrompt(await runHook(""))
   })

@@ -44,11 +44,6 @@ const INSPECTORS: Record<string, Inspector> = {
     return true
   },
 
-  nohup: (_args) => {
-    // nohup wraps arbitrary commands — always prompt
-    return false
-  },
-
   source: (_args) => {
     // source/. executes arbitrary scripts — always prompt
     return false

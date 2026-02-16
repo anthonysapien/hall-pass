@@ -14,7 +14,7 @@ export const SAFE_COMMANDS = new Set([
   "bun", "npm", "npx",
 
   // Process management
-  "lsof", "sleep", "timeout",
+  "lsof", "sleep",
 
   // Network
   "curl", "wget",
@@ -47,7 +47,7 @@ export const SAFE_COMMANDS = new Set([
 export const INSPECTED_COMMANDS = new Set([
   "git",
   // Commands that can proxy/execute arbitrary other commands
-  "xargs", "nohup",
+  "xargs",
   // Commands with dangerous flag variants
   "find", "sed", "awk",
   "kill", "chmod",
