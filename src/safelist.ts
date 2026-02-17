@@ -14,7 +14,7 @@ export const SAFE_COMMANDS = new Set([
   "bun", "npm", "npx",
 
   // Process management
-  "lsof", "sleep", "pkill", "killall",
+  "lsof", "ps", "sleep", "pkill", "killall",
 
   // Network
   "curl", "wget",
