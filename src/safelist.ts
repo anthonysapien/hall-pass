@@ -11,7 +11,7 @@ export const SAFE_COMMANDS = new Set([
   "gh",
 
   // JS/TS runtimes & package managers (safe as task runners, -c/-e handled by inspection)
-  "bun", "npm", "npx",
+  "bun", "bunx", "npm", "npx", "tsc",
 
   // Process management
   "lsof", "ps", "sleep", "pkill", "killall",
