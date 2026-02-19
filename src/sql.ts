@@ -12,6 +12,7 @@
 
 import { parse } from "pgsql-ast-parser"
 import { isPsqlMetaCommandSafe } from "./psql.ts"
+import { isSqliteDotCommandSafe } from "./sqlite.ts"
 
 const READ_ONLY_TYPES = new Set([
   "select",
@@ -113,6 +114,11 @@ export function isSqlReadOnly(sql: string): boolean {
   // psql meta-commands start with backslash — not parseable as SQL
   if (trimmed.startsWith("\\")) {
     return isPsqlMetaCommandSafe(trimmed)
+  }
+
+  // SQLite dot-commands start with . — not parseable as SQL
+  if (trimmed.startsWith(".")) {
+    return isSqliteDotCommandSafe(trimmed)
   }
 
   try {

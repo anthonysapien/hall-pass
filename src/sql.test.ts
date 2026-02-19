@@ -179,6 +179,60 @@ describe("isSqlReadOnly", () => {
     }
   })
 
+  describe("SQLite dot-commands (should return true)", () => {
+    const safe = [
+      ".schema",
+      ".schema known_devices",
+      ".tables",
+      ".databases",
+      ".indexes",
+      ".indices",
+      ".fullschema",
+      ".headers on",
+      ".mode column",
+      ".mode json",
+      ".separator ,",
+      ".show",
+      ".dbinfo",
+      ".stats",
+      ".version",
+      ".help",
+      ".dump",
+      ".dump users",
+      ".timer on",
+      ".width 20 10",
+      ".explain on",
+      ".eqp on",
+    ]
+
+    for (const sql of safe) {
+      test(sql, () => {
+        expect(isSqlReadOnly(sql)).toBe(true)
+      })
+    }
+  })
+
+  describe("dangerous SQLite dot-commands (should return false)", () => {
+    const dangerous = [
+      ".import data.csv users",
+      ".restore main backup.db",
+      ".open --new test.db",
+      ".output /tmp/dump.txt",
+      ".once /tmp/out.txt",
+      ".save backup.db",
+      ".backup main backup.db",
+      ".read script.sql",
+      ".system ls",
+      ".shell echo hello",
+    ]
+
+    for (const sql of dangerous) {
+      test(sql, () => {
+        expect(isSqlReadOnly(sql)).toBe(false)
+      })
+    }
+  })
+
   test("unparseable SQL returns false", () => {
     expect(isSqlReadOnly("NOT VALID SQL !@#$")).toBe(false)
   })
