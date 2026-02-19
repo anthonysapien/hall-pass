@@ -233,6 +233,49 @@ describe("isSqlReadOnly", () => {
     }
   })
 
+  describe("SQLite PRAGMAs — read-only (should return true)", () => {
+    const safe = [
+      "PRAGMA table_info(users)",
+      "PRAGMA table_info(device_event_attributions);",
+      "PRAGMA table_xinfo(users)",
+      "PRAGMA index_list(users)",
+      "PRAGMA index_info(idx_users_email)",
+      "PRAGMA foreign_key_list(orders)",
+      "PRAGMA database_list",
+      "PRAGMA compile_options",
+      "PRAGMA integrity_check",
+      "PRAGMA quick_check",
+      "PRAGMA freelist_count",
+      "PRAGMA page_count",
+      "PRAGMA page_size",
+      "PRAGMA journal_mode",
+      "PRAGMA wal_checkpoint",
+      "pragma table_info(users)",
+    ]
+
+    for (const sql of safe) {
+      test(sql, () => {
+        expect(isSqlReadOnly(sql)).toBe(true)
+      })
+    }
+  })
+
+  describe("SQLite PRAGMAs — setters (should return false)", () => {
+    const setters = [
+      "PRAGMA journal_mode = WAL",
+      "PRAGMA foreign_keys = ON",
+      "PRAGMA cache_size = 10000",
+      "PRAGMA synchronous = OFF",
+      "PRAGMA temp_store = MEMORY",
+    ]
+
+    for (const sql of setters) {
+      test(sql, () => {
+        expect(isSqlReadOnly(sql)).toBe(false)
+      })
+    }
+  })
+
   test("unparseable SQL returns false", () => {
     expect(isSqlReadOnly("NOT VALID SQL !@#$")).toBe(false)
   })

@@ -1,8 +1,8 @@
 /**
- * SQLite dot-command safety checker.
+ * SQLite safety checkers for dot-commands and PRAGMAs.
  *
- * SQLite dot-commands aren't SQL — pgsql-ast-parser can't parse them.
- * We maintain an allowlist of read-only dot-commands and reject the rest.
+ * Neither dot-commands nor PRAGMAs are standard SQL —
+ * pgsql-ast-parser can't parse them. We handle them here.
  */
 
 /**
@@ -75,4 +75,27 @@ export function isSqliteDotCommandSafe(input: string): boolean {
   if (!match) return false
 
   return SAFE_SQLITE_DOT_COMMANDS.has(match[1].toLowerCase())
+}
+
+/**
+ * Check if a PRAGMA statement is read-only.
+ *
+ * PRAGMA comes in two forms:
+ *   PRAGMA name            — query (read-only)
+ *   PRAGMA name(arg)       — query (read-only)
+ *   PRAGMA name = value    — setter (write)
+ *
+ * Returns true for queries, false for setters.
+ */
+export function isSqlitePragmaReadOnly(input: string): boolean {
+  const trimmed = input.trim()
+
+  // Strip trailing semicolons
+  const cleaned = trimmed.replace(/;+\s*$/, "")
+
+  // Must start with PRAGMA (case-insensitive)
+  if (!/^pragma\s/i.test(cleaned)) return false
+
+  // If it contains '=', it's a setter
+  return !cleaned.includes("=")
 }
