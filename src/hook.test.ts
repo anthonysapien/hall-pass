@@ -287,30 +287,18 @@ describe("hook integration", () => {
     }
   })
 
-  describe("sqlite3 — should ALLOW read-only SQL (exit 0 + JSON)", () => {
+  describe("sqlite3 — should ALLOW all (local file-based DB)", () => {
     const allowed = [
       `sqlite3 db.sqlite "SELECT * FROM users"`,
       `sqlite3 -header -column db.sqlite "SELECT count(*) FROM orders"`,
+      `sqlite3 db.sqlite "DROP TABLE users"`,
+      `sqlite3 db.sqlite "INSERT INTO users VALUES (1, 'test')"`,
+      `sqlite3 db.sqlite`,
     ]
 
     for (const cmd of allowed) {
       test(cmd, async () => {
         expectAllow(await runHook(cmd))
-      })
-    }
-  })
-
-  describe("sqlite3 — should PROMPT for writes (exit 1)", () => {
-    const prompted = [
-      `sqlite3 db.sqlite "DROP TABLE users"`,
-      `sqlite3 db.sqlite "INSERT INTO users VALUES (1, 'test')"`,
-      // Interactive session (no SQL arg) — prompt
-      `sqlite3 db.sqlite`,
-    ]
-
-    for (const cmd of prompted) {
-      test(cmd, async () => {
-        expectPrompt(await runHook(cmd))
       })
     }
   })

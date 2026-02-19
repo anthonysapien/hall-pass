@@ -297,13 +297,8 @@ describe("evaluateBashCommand", () => {
       expectPrompt(cmd("mysql", "-u", "root", "mydb"))
     })
 
-    test("sqlite3 with read-only SQL → allow", () => {
-      expectAllow(cmd("sqlite3", "db.sqlite", "SELECT * FROM users"))
-    })
-
-    test("sqlite3 with write SQL → prompt", () => {
-      expectPrompt(cmd("sqlite3", "db.sqlite", "DROP TABLE users"))
-    })
+    // sqlite3 is now in SAFE_COMMANDS (local file-based DB) —
+    // it won't reach the DB client inspector anymore
   })
 
   describe("git via evaluateBashCommand", () => {

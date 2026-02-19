@@ -41,6 +41,9 @@ export const SAFE_COMMANDS = new Set([
 
   // Dev tools
   "shfmt",
+
+  // Local databases (file-based, no remote server risk)
+  "sqlite3",
 ])
 
 
@@ -51,7 +54,6 @@ export const SAFE_COMMANDS = new Set([
 export const DB_CLIENTS = new Set([
   "psql",
   "mysql",
-  "sqlite3",
 ])
 
 /**
